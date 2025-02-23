@@ -17,16 +17,14 @@ type Message struct {
 	Content  interface{} `json:"content"`
 }
 
-// type PlayerState  {
-// 	ID        int         `json:"id"`
-// 	Position  pixel.Vec   `json:"position"`
-// 	Direction pixel.Vec   `json:"direction"`
-// 	Nickname  string      `json:"nickname"`
-// 	HeroClass PlayerClass `json:"hero_class"`
-// }
+type OtherPlayer struct {
+	Player      *Player
+	LastSeen    time.Time
+	IsAttacking bool
+}
 
 var statePlayers = make(map[int]PlayerState)
-var otherPlayers = make(map[int]*Player)
+var otherPlayers = make(map[int]*OtherPlayer)
 
 type PlayerState map[string]interface{}
 
@@ -57,15 +55,15 @@ func HandleMessage(msg Message, player *Player) {
 		}
 		log.Println("New player ID:", id)
 		playerID = id
-		// Convert the content map to JSON
+
 	case "states_update":
 		data, err := json.Marshal(msg.Content)
 		if err != nil {
-			log.Printf("Error marshaling id: %v", err)
+			log.Printf("Error marshaling players states: %v", err)
 			return
 		}
 		if err := json.Unmarshal(data, &statePlayers); err != nil {
-			log.Printf("Error unmarshaling player id: %v", err)
+			log.Printf("Error unmarshaling players states: %v", err)
 			return
 		}
 		mu.Lock()
@@ -100,33 +98,129 @@ func HandleMessage(msg Message, player *Player) {
 			}
 
 			var heroClass PlayerClass
-			if h, ok := state["heroClass"].(PlayerClass); ok {
-				heroClass = PlayerClass(h)
+			if h, ok := state["heroClass"].(string); ok {
+				switch h {
+				case "warrior":
+					heroClass = WarriorClass
+				case "mage":
+					heroClass = MageClass
+				}
+			}
+			var isAttacking bool
+			if attack, ok := state["isAttacking"].(bool); ok {
+				isAttacking = attack
 			}
 
 			// Create or update other player
 			other, exists := otherPlayers[id]
 			if !exists {
-				other = &Player{
-					ID:     id,
-					imd:    imdraw.New(nil),
-					speed:  0.3,
-					radius: 15,
+				newPlayer := &Player{
+					ID:           id,
+					imd:          imdraw.New(nil),
+					speed:        0.3,
+					radius:       15,
+					direction:    dir,
+					projectiles:  make([]*Projectile, 0),
+					meleeEffects: make([]*MeleeEffect, 0),
+				}
+				other = &OtherPlayer{
+					Player:   newPlayer,
+					LastSeen: time.Now(),
 				}
 				otherPlayers[id] = other
 			}
 
-			other.pos = pos
-			other.direction = dir
-			other.nickname = nickname
-			other.heroClass = heroClass
+			other.Player.pos = pos
+			other.Player.direction = dir
+			other.Player.nickname = nickname
+			other.Player.heroClass = heroClass
+			// log.Println("hero class: ", heroClass)
+			// other.lastSeen = time.Now()
+			// other.isAttacking = isAttacking
+			otherPlayers[id] = other
+
+			if isAttacking {
+				other.Player.Attack()
+
+				// log.Println("attacking player", player)
+			}
 		}
 		mu.Unlock()
 
-		log.Println("States update:", statePlayers)
+	// case "player_attack":
+	// 	var attackingPlayer PlayerState
+	// 	data, err := json.Marshal(msg.Content)
+	// 	if err != nil {
+	// 		log.Printf("(Player attack) Error marshaling state: %v", err)
+	// 		return
+	// 	}
+	// 	if err := json.Unmarshal(data, &attackingPlayer); err != nil {
+	// 		log.Printf("(Player attack) Error unmarshaling player state: %v", err)
+	// 		return
+	// 	}
 
-	case "attack":
-		// Handle attack messages
+	// 	// Get ID and check if it's our own player BEFORE locking
+	// 	var attackPlayerID float64 // Changed from int to float64 for JSON numbers
+	// 	if id, ok := attackingPlayer["id"].(float64); ok {
+	// 		attackPlayerID = id
+	// 	}
+
+	// 	// Skip processing if it's our own attack
+	// 	if int(attackPlayerID) == playerID {
+	// 		return
+	// 	}
+	// 	mu.Lock()
+	// 	// Access map fields correctly
+	// 	pos := pixel.V(0, 0)
+	// 	if posMap, ok := attackingPlayer["pos"].(map[string]interface{}); ok {
+	// 		if x, ok := posMap["X"].(float64); ok {
+	// 			if y, ok := posMap["Y"].(float64); ok {
+	// 				pos = pixel.V(x, y)
+	// 			}
+	// 		}
+	// 	}
+	// 	dir := pixel.V(1, 0)
+	// 	if dirMap, ok := attackingPlayer["direction"].(map[string]interface{}); ok {
+	// 		if x, ok := dirMap["X"].(float64); ok {
+	// 			if y, ok := dirMap["Y"].(float64); ok {
+	// 				dir = pixel.V(x, y)
+	// 			}
+	// 		}
+	// 	}
+
+	// 	nickname := ""
+	// 	if n, ok := attackingPlayer["nickname"].(string); ok {
+	// 		nickname = n
+	// 	}
+
+	// 	var heroClass PlayerClass
+	// 	if h, ok := attackingPlayer["heroClass"].(PlayerClass); ok {
+	// 		heroClass = PlayerClass(h)
+	// 	}
+
+	// 	// Create or update other player
+	// 	other, exists := otherPlayers[int(attackPlayerID)]
+	// 	if !exists {
+	// 		other.Player = &Player{
+	// 			ID:           int(attackPlayerID),
+	// 			imd:          imdraw.New(nil),
+	// 			speed:        0.3,
+	// 			radius:       15,
+	// 			projectiles:  make([]*Projectile, 0),
+	// 			meleeEffects: make([]*MeleeEffect, 0),
+	// 		}
+	// 		otherPlayers[int(attackPlayerID)] = other
+	// 	}
+
+	// 	other.Player.pos = pos
+	// 	other.Player.direction = dir
+	// 	other.Player.nickname = nickname
+	// 	other.Player.heroClass = heroClass
+	// 	// other.lastSeen = time.Now()
+	// 	other.Player.Attack()
+	// 	log.Println("attack player ", player)
+	// 	mu.Unlock()
+
 	case "player_left":
 		// Handle player leaving messages
 		delete(otherPlayers, msg.ClientID)
@@ -135,130 +229,38 @@ func HandleMessage(msg Message, player *Player) {
 }
 
 func DrawOtherPlayers(win *pixelgl.Window) {
-	// currentTime := time.Now()
+	currentTime := time.Now()
+	var stalePlayers []int
 
-	// Create a temporary slice to track stale players
-	// var stalePlayers []int
-	// playersMutex.Lock()
-	// Draw and update other players
 	mu.Lock()
-	for _, other := range otherPlayers {
+	defer mu.Unlock()
 
-		// Check if player state is too old (more than 1 second)
-		// if currentTime.Sub(other.LastSeen) > time.Second*1 {
-		// 	stalePlayers = append(stalePlayers, id)
-		// 	continue
-		// }
-		// Initialize IMDraw if it's nil
-		if other.ID == playerID {
+	// First pass: identify stale players and draw active ones
+	for id, other := range otherPlayers {
+		if other.Player.ID == playerID {
 			continue
 		}
-		if other.imd == nil {
-			other.imd = imdraw.New(nil)
+
+		// Check if player state is too old (more than 1 second)
+		if currentTime.Sub(other.LastSeen) > time.Second {
+			stalePlayers = append(stalePlayers, id)
+			continue
 		}
 
-		other.Draw(win)
-		log.Println("Drawing player", other)
+		// Initialize IMDraw if needed
+		if other.Player.imd == nil {
+			other.Player.imd = imdraw.New(nil)
+		}
+
+		other.Player.Draw(win)
+		other.LastSeen = time.Now()
+
 	}
-	// playersMutex.Unlock()
-	// Remove stale players
-	// for _, id := range stalePlayers {
-	// 	delete(otherPlayers, id)
-	// 	log.Printf("Removed stale player %d", id)
-	// }
-	mu.Unlock()
+
+	// Second pass: remove stale players
+	for id := range stalePlayers {
+		delete(otherPlayers, id)
+		otherPlayers[id].Player.imd.Clear()
+		log.Printf("Removed stale player: %d", id)
+	}
 }
-
-// // Add new function to process state updates
-// func ProcessStateUpdates(quit chan struct{}) {
-// 	ticker := time.NewTicker(stateProcessingInterval)
-// 	defer ticker.Stop()
-
-// 	for {
-// 		select {
-// 		case <-ticker.C:
-// 			// Process all pending states, but only the most recent one per player
-// 			states := make(map[int]Message)
-
-// 			// Drain the channel and keep only the latest state per player
-// 		drainLoop:
-// 			for {
-
-// 				select {
-// 				case msg := <-stateUpdateChan:
-// 					if contentMap, ok := msg.Content.(map[string]interface{}); ok {
-// 						if id, ok := contentMap["id"].(float64); ok {
-// 							states[int(id)] = msg // Override older states
-// 						}
-// 					}
-// 				default:
-// 					break drainLoop
-// 				}
-// 			}
-
-// 			// Process the latest states
-// 			for _, msg := range states {
-// 				processPlayerState(msg)
-// 			}
-// 		case <-quit:
-// 			return
-// 		}
-// 	}
-// }
-
-// // Add helper function to process individual player state
-// func processPlayerState(msg Message) {
-// 	contentMap, ok := msg.Content.(map[string]interface{})
-// 	if !ok || contentMap == nil {
-// 		return
-// 	}
-
-// 	idVal, exists := contentMap["id"]
-// 	if !exists {
-// 		return
-// 	}
-
-// 	id, ok := idVal.(float64)
-// 	if !ok || int(id) == playerID {
-// 		return
-// 	}
-// 	mu.Lock()
-// 	// Get or create other player
-// 	other, exists := otherPlayers[int(id)]
-// 	if !exists {
-// 		other = &OtherPlayer{
-// 			Player: Player{
-// 				ID:  int(id),
-// 				imd: imdraw.New(nil),
-// 			},
-// 			LastSeen: time.Now(),
-// 		}
-// 		otherPlayers[int(id)] = other
-// 		log.Println("\nGot player", other)
-// 	}
-// 	mu.Unlock()
-
-// 	// Update player state directly without marshal/unmarshal
-// 	if pos, ok := contentMap["pos"].(map[string]interface{}); ok {
-// 		if x, ok := pos["X"].(float64); ok {
-// 			if y, ok := pos["Y"].(float64); ok {
-// 				other.Player.pos = pixel.V(x, y)
-// 			}
-// 		}
-// 	}
-// 	if dir, ok := contentMap["direction"].(map[string]interface{}); ok {
-// 		if x, ok := dir["X"].(float64); ok {
-// 			if y, ok := dir["Y"].(float64); ok {
-// 				other.Player.direction = pixel.V(x, y)
-// 			}
-// 		}
-// 	}
-// 	if nickname, ok := contentMap["nickname"].(string); ok {
-// 		other.Player.nickname = nickname
-// 	}
-// 	if heroClass, ok := contentMap["heroClass"].(PlayerClass); ok {
-// 		other.Player.heroClass = PlayerClass(heroClass)
-// 	}
-// 	other.LastSeen = time.Now()
-
-// }

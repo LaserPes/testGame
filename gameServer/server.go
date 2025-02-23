@@ -57,7 +57,7 @@ func main() {
 	go handleMessages(clients, broadcast, errChan)
 
 	go broadcastLatestStates()
-	ID := 0
+	ID := 1
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -75,7 +75,8 @@ func main() {
 		}
 		ID++
 		clients[client] = true
-		go handleClient(client, clients, broadcast, errChan)
+		go handleClientStates(client, clients, broadcast, errChan)
+		// go handleClientAttacks(client, broadcast, errChan)
 		log.Println("New client connected:", client.Id)
 		mu.Unlock()
 
@@ -97,30 +98,21 @@ func main() {
 	}
 }
 
-func handleClient(client *Client, clients map[*Client]bool, broadcast chan Message, errChan chan error) {
+func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan Message, errChan chan error) {
 	defer func() {
 		mu.Lock()
-		broadcast <- Message{
-			ClientID: client.Id,
-			Type:     "player_left",
-		}
 		client.Conn.Close()
 		delete(clients, client)
-		// delete(latestStates, client.Id)
-		log.Println("Client disconnected:", client.Id)
+		delete(latestStates, client.Id)
 		mu.Unlock()
 	}()
-
-	mu.Lock()
-	clients[client] = true
-	mu.Unlock()
 
 	ticker := time.NewTicker(time.Second / 30) // Регулируй частоту отправки
 	defer ticker.Stop()
 
 	for range ticker.C {
-
 		var msg Message
+
 		err := client.Conn.ReadJSON(&msg)
 		if err != nil {
 			errChan <- err
@@ -133,18 +125,60 @@ func handleClient(client *Client, clients map[*Client]bool, broadcast chan Messa
 			// log.Println("Received player state message:", msg)
 			mu.Unlock()
 		}
+
+		// go func() {
+		// 	for {
+		// 		var msg Message
+
+		// 		err := client.Conn.ReadJSON(&msg)
+		// 		if err != nil {
+		// 			errChan <- err
+		// 			break
+		// 		}
+		// 		if msg.Type == "player_attack" {
+		// 			broadcast <- msg
+		// 		}
+
+		// 	}
+		// }()
+
 	}
+
+	// for {
+	// 	var msg Message
+	// 	err := client.Conn.ReadJSON(&msg)
+	// 	if err != nil {
+	// 		errChan <- err
+	// 		break
+	// 	}
+
+	// }
 }
 
+// func handleClientAttacks(client *Client, broadcast chan Message, errChan chan error) {
+// 	defer func() {
+// 		mu.Lock()
+// 		broadcast <- Message{
+// 			ClientID: client.Id,
+// 			Type:     "player_left",
+// 		}
+// 		client.Conn.Close()
+// 		delete(clients, client)
+// 		delete(latestStates, client.Id)
+// 		log.Println("Client disconnected:", client.Id)
+// 		mu.Unlock()
+// 	}()
+
+// }
 func handleMessages(clients map[*Client]bool, broadcast chan Message, errChan chan error) {
 	for {
 		select {
 		case message := <-broadcast:
 
-			// Если канал почти заполнен, читаем лишние сообщения
-			for len(broadcast) > broadcastQueueSize/2 {
-				<-broadcast // Удаляем старые сообщения
-			}
+			// // Если канал почти заполнен, читаем лишние сообщения
+			// for len(broadcast) > broadcastQueueSize/2 {
+			// 	<-broadcast // Удаляем старые сообщения
+			// }
 
 			mu.Lock()
 			for client := range clients {
@@ -172,7 +206,7 @@ func broadcastLatestStates() {
 		mu.Lock()
 		if len(latestStates) > 0 {
 			for client := range clients {
-				log.Println("Broadcasting to client", latestStates)
+				// log.Println("Broadcasting to client", latestStates)
 				msg := Message{
 					Type:    "states_update",
 					Content: latestStates,

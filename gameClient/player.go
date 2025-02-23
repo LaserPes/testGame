@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/gopxl/pixel"
 	"github.com/gopxl/pixel/imdraw"
@@ -228,10 +227,6 @@ func (p *Player) MoveRight() {
 }
 
 func (p *Player) Attack() {
-	// Check attack cooldown
-	if time.Since(time.Unix(0, int64(p.lastAttack))).Seconds() < float64(p.heroClass.AttackSpeed)/1000.0 {
-		return
-	}
 
 	if p.heroClass.AttackType == "magic" {
 		// Create new projectile
@@ -240,15 +235,10 @@ func (p *Player) Attack() {
 			p.direction,
 			float64(p.heroClass.AttackRange),
 		)
-		// log.Printf("Player %s attacking from %v with %s: %v", p.nickname, p.pos, p.heroClass.AttackType, p.direction)
 		p.projectiles = append(p.projectiles, projectile)
-		p.lastAttack = float64(time.Now().UnixNano())
 	} else if p.heroClass.AttackType == "physical" {
-
 		effect := NewMeleeEffect(p.pos, p.heroClass.AttackRange)
-		// log.Printf("Player %s attacking with %s from %v, direction %s", p.nickname, p.heroClass.AttackType, p.pos, p.direction)
 		p.meleeEffects = append(p.meleeEffects, effect)
-		p.lastAttack = float64(time.Now().UnixNano())
 	}
 
 }

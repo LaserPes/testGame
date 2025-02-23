@@ -49,6 +49,12 @@ func (b *Button) IsClicked(win *pixelgl.Window) bool {
 	return false
 }
 
+const (
+	fps = 30.0
+)
+
+var dt = 1.0 / fps
+
 func main() {
 	pixelgl.Run(run)
 
@@ -93,28 +99,55 @@ func run() {
 		(monitorWidth-winWidth)/2,
 		(monitorHeight-winHeight)/2,
 	))
-	// Create channels for WebSocket communication
 	done := make(chan struct{})
-	receive := make(chan Message)
-	// Create quit channel for clean shutdown
+	receive := make(chan Message, 100) // Add buffer to prevent blocking
 	quit := make(chan struct{})
 	defer close(quit)
 
-	// Start state processor
-	// go ProcessStateUpdates(quit)
-	// Start goroutine to receive messages
+	// Connection monitor
 	go func() {
 		defer close(done)
 		for {
 			var msg Message
 			err := conn.ReadJSON(&msg)
 			if err != nil {
-				log.Println("read:", err)
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("Unexpected close error: %v", err)
+				}
 				return
 			}
-			receive <- msg
+			select {
+			case receive <- msg:
+			case <-quit:
+				return
+			}
 		}
 	}()
+
+	// Heartbeat to keep connection alive
+	go func() {
+		ticker := time.NewTicker(time.Second * 30)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(time.Second)); err != nil {
+					log.Printf("ping error: %v", err)
+					return
+				}
+			case <-quit:
+				return
+			}
+		}
+	}()
+
+	// Set connection properties
+	conn.SetReadLimit(32768)
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
 
 	nickname, heroClass := createPlayerForm(win)
 	if nickname == "" || heroClass == "" {
@@ -152,10 +185,8 @@ func run() {
 	player.ID = playerID
 	// Game state variables
 	lastTime := time.Now()
-	fps := 30.0
-	dt := 1.0 / fps
 
-	stateTicker := time.NewTicker(time.Second / 30)
+	stateTicker := time.NewTicker(time.Second / 20)
 	defer stateTicker.Stop()
 
 	// Main game loop
@@ -200,14 +231,12 @@ func run() {
 					"pos":       player.pos,
 					"direction": player.direction,
 					"nickname":  player.nickname,
-					"heroClass": player.heroClass,
+					"heroClass": heroClass,
 				},
 			}
 			if err := conn.WriteJSON(msg); err != nil {
 				log.Println("write:", err)
 				return
-			} else {
-				log.Println("write:", msg)
 			}
 		default:
 		}
@@ -225,7 +254,32 @@ func run() {
 
 		// Handle attacks
 		if win.JustPressed(pixelgl.MouseButtonLeft) {
-			player.Attack()
+			// Check attack cooldown
+			if time.Since(time.Unix(0, int64(player.lastAttack))).Seconds() < float64(player.heroClass.AttackSpeed)/1000.0 {
+
+			} else {
+				player.Attack()
+				player.lastAttack = float64(time.Now().UnixNano())
+
+				// Send attack message
+				msg := Message{
+					ClientID: playerID,
+					Type:     "states_update",
+					Content: PlayerState{
+						"id":          player.ID,
+						"pos":         player.pos,
+						"direction":   player.direction,
+						"nickname":    player.nickname,
+						"heroClass":   heroClass,
+						"isAttacking": true,
+					},
+				}
+				if err := conn.WriteJSON(msg); err != nil {
+					log.Println("write:", err)
+					return
+				}
+			}
+
 		}
 
 		// Update and draw melee effects
@@ -246,14 +300,36 @@ func run() {
 				remainingProjectiles = append(remainingProjectiles, proj)
 			}
 		}
-		player.projectiles = remainingProjectiles
-		// DrawOtherPlayers(win)
+
+		// Draw other players every frame
 		DrawOtherPlayers(win)
+		mu.Lock()
+		for _, other := range otherPlayers {
+			// Update and draw other player's melee effects
+			otherRemainingEffects := make([]*MeleeEffect, 0)
+			for _, effect := range other.Player.meleeEffects {
+				if effect.Update(dt, other.Player.pos) {
+					effect.Draw(win)
+					otherRemainingEffects = append(otherRemainingEffects, effect)
+				}
+			}
+			other.Player.meleeEffects = otherRemainingEffects
+
+			// Update and draw other player's projectiles
+			otherRemainingProjectiles := make([]*Projectile, 0)
+			for _, proj := range other.Player.projectiles {
+				if proj.Update() {
+					proj.Draw(win)
+					otherRemainingProjectiles = append(otherRemainingProjectiles, proj)
+				}
+			}
+			other.Player.projectiles = otherRemainingProjectiles
+		}
+		mu.Unlock()
 		// Draw player
 		player.Draw(win)
 
 		win.Update()
 
 	}
-
 }

@@ -112,7 +112,7 @@ var WarriorClass = PlayerClass{
 	Health:             150,
 	Attack:             20,
 	AttackRange:        50,
-	AttackSpeed:        10,
+	AttackSpeed:        500,
 	AttackType:         "physical",
 }
 
@@ -166,7 +166,12 @@ func (p *Player) Draw(win *pixelgl.Window) {
 		p.pos.X-float64(len(p.nickname)*3), // Center text horizontally
 		p.pos.Y+p.radius+5),                // Place text above player
 		atlas)
-	nicknameText.Color = pixel.RGB(1, 1, 1) // White text for better visibility
+	if p.ID == playerID {
+		nicknameText.Color = pixel.RGB(1, 1, 1)
+	} else {
+		nicknameText.Color = pixel.RGB(0, 0, 0)
+	}
+
 	fmt.Fprintln(nicknameText, p.nickname)
 	nicknameText.Draw(win, pixel.IM)
 

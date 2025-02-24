@@ -147,83 +147,18 @@ func HandleMessage(msg Message, player *Player) {
 		}
 		mu.Unlock()
 
-	// case "player_attack":
-	// 	var attackingPlayer PlayerState
-	// 	data, err := json.Marshal(msg.Content)
-	// 	if err != nil {
-	// 		log.Printf("(Player attack) Error marshaling state: %v", err)
-	// 		return
-	// 	}
-	// 	if err := json.Unmarshal(data, &attackingPlayer); err != nil {
-	// 		log.Printf("(Player attack) Error unmarshaling player state: %v", err)
-	// 		return
-	// 	}
-
-	// 	// Get ID and check if it's our own player BEFORE locking
-	// 	var attackPlayerID float64 // Changed from int to float64 for JSON numbers
-	// 	if id, ok := attackingPlayer["id"].(float64); ok {
-	// 		attackPlayerID = id
-	// 	}
-
-	// 	// Skip processing if it's our own attack
-	// 	if int(attackPlayerID) == playerID {
-	// 		return
-	// 	}
-	// 	mu.Lock()
-	// 	// Access map fields correctly
-	// 	pos := pixel.V(0, 0)
-	// 	if posMap, ok := attackingPlayer["pos"].(map[string]interface{}); ok {
-	// 		if x, ok := posMap["X"].(float64); ok {
-	// 			if y, ok := posMap["Y"].(float64); ok {
-	// 				pos = pixel.V(x, y)
-	// 			}
-	// 		}
-	// 	}
-	// 	dir := pixel.V(1, 0)
-	// 	if dirMap, ok := attackingPlayer["direction"].(map[string]interface{}); ok {
-	// 		if x, ok := dirMap["X"].(float64); ok {
-	// 			if y, ok := dirMap["Y"].(float64); ok {
-	// 				dir = pixel.V(x, y)
-	// 			}
-	// 		}
-	// 	}
-
-	// 	nickname := ""
-	// 	if n, ok := attackingPlayer["nickname"].(string); ok {
-	// 		nickname = n
-	// 	}
-
-	// 	var heroClass PlayerClass
-	// 	if h, ok := attackingPlayer["heroClass"].(PlayerClass); ok {
-	// 		heroClass = PlayerClass(h)
-	// 	}
-
-	// 	// Create or update other player
-	// 	other, exists := otherPlayers[int(attackPlayerID)]
-	// 	if !exists {
-	// 		other.Player = &Player{
-	// 			ID:           int(attackPlayerID),
-	// 			imd:          imdraw.New(nil),
-	// 			speed:        0.3,
-	// 			radius:       15,
-	// 			projectiles:  make([]*Projectile, 0),
-	// 			meleeEffects: make([]*MeleeEffect, 0),
-	// 		}
-	// 		otherPlayers[int(attackPlayerID)] = other
-	// 	}
-
-	// 	other.Player.pos = pos
-	// 	other.Player.direction = dir
-	// 	other.Player.nickname = nickname
-	// 	other.Player.heroClass = heroClass
-	// 	// other.lastSeen = time.Now()
-	// 	other.Player.Attack()
-	// 	log.Println("attack player ", player)
-	// 	mu.Unlock()
-
 	case "player_left":
 		// Handle player leaving messages
-		delete(otherPlayers, msg.ClientID)
+		mu.Lock()
+		if other, exists := otherPlayers[msg.ClientID]; exists {
+			if other.Player != nil && other.Player.imd != nil {
+				other.Player.imd.Clear()
+			}
+			delete(otherPlayers, msg.ClientID)
+			delete(statePlayers, msg.ClientID)
+			log.Printf("Player %d left", msg.ClientID)
+		}
+		mu.Unlock()
 	}
 
 }
@@ -240,7 +175,7 @@ func DrawOtherPlayers(win *pixelgl.Window) {
 		if other.Player.ID == playerID {
 			continue
 		}
-
+		// log.Println("Drawing: ", other.Player.ID)
 		// Check if player state is too old (more than 1 second)
 		if currentTime.Sub(other.LastSeen) > time.Second {
 			stalePlayers = append(stalePlayers, id)
@@ -248,19 +183,22 @@ func DrawOtherPlayers(win *pixelgl.Window) {
 		}
 
 		// Initialize IMDraw if needed
-		if other.Player.imd == nil {
-			other.Player.imd = imdraw.New(nil)
-		}
-
+		// if other.Player.imd == nil {
+		// 	other.Player.imd = imdraw.New(nil)
+		// }
 		other.Player.Draw(win)
 		other.LastSeen = time.Now()
-
 	}
 
 	// Second pass: remove stale players
 	for id := range stalePlayers {
-		delete(otherPlayers, id)
-		otherPlayers[id].Player.imd.Clear()
-		log.Printf("Removed stale player: %d", id)
+		if other, exists := otherPlayers[id]; exists {
+			if other.Player != nil && other.Player.imd != nil {
+				other.Player.imd.Clear()
+			}
+			delete(otherPlayers, id)
+			delete(statePlayers, id)
+			log.Printf("Removed stale player: %d", id)
+		}
 	}
 }

@@ -99,16 +99,8 @@ func main() {
 }
 
 func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan Message, errChan chan error) {
-	defer func() {
-		mu.Lock()
-		client.Conn.Close()
-		delete(clients, client)
-		delete(latestStates, client.Id)
-		mu.Unlock()
-	}()
 
 	ticker := time.NewTicker(time.Second / 30) // Регулируй частоту отправки
-	defer ticker.Stop()
 
 	for range ticker.C {
 		var msg Message
@@ -126,24 +118,20 @@ func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan
 			mu.Unlock()
 		}
 
-		// go func() {
-		// 	for {
-		// 		var msg Message
-
-		// 		err := client.Conn.ReadJSON(&msg)
-		// 		if err != nil {
-		// 			errChan <- err
-		// 			break
-		// 		}
-		// 		if msg.Type == "player_attack" {
-		// 			broadcast <- msg
-		// 		}
-
-		// 	}
-		// }()
-
 	}
-
+	defer func() {
+		mu.Lock()
+		broadcast <- Message{
+			ClientID: client.Id,
+			Type:     "player_left",
+		}
+		client.Conn.Close()
+		delete(clients, client)
+		delete(latestStates, client.Id)
+		log.Println("Client disconnected:", client.Id)
+		mu.Unlock()
+		ticker.Stop()
+	}()
 	// for {
 	// 	var msg Message
 	// 	err := client.Conn.ReadJSON(&msg)
@@ -186,6 +174,7 @@ func handleMessages(clients map[*Client]bool, broadcast chan Message, errChan ch
 					log.Printf("Error broadcasting to client %d: %v", client.Id, err)
 					client.Conn.Close()
 					delete(clients, client)
+					delete(latestStates, client.Id)
 				}
 			}
 			mu.Unlock()
@@ -193,13 +182,14 @@ func handleMessages(clients map[*Client]bool, broadcast chan Message, errChan ch
 		case err := <-errChan:
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("Unexpected close error: %v", err)
+
 			}
 		}
 	}
 }
 
 func broadcastLatestStates() {
-	ticker := time.NewTicker(time.Second / 30) // Частота отправки
+	ticker := time.NewTicker(time.Second / 20) // Частота отправки
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -215,6 +205,7 @@ func broadcastLatestStates() {
 					log.Printf("Error broadcasting to client %d: %v", client.Id, err)
 					client.Conn.Close()
 					delete(clients, client)
+					delete(latestStates, client.Id)
 				}
 
 			}

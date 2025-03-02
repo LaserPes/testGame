@@ -10,10 +10,14 @@ import (
 	"github.com/gopxl/pixel/pixelgl"
 	"github.com/gopxl/pixel/text"
 	"github.com/gorilla/websocket"
-	"golang.org/x/exp/rand"
 )
 
 var playerID int
+var playerExists bool
+var playerClass int
+var nickname string
+var playerHP int
+var startX, startY float64
 
 type Button struct {
 	rect  pixel.Rect
@@ -59,31 +63,44 @@ func main() {
 	pixelgl.Run(run)
 
 }
+func connectToServer() (*websocket.Conn, error) {
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		// Set proper headers and protocol versions
+		Subprotocols: []string{"game-protocol"},
+	}
+
+	conn, _, err := dialer.Dial("ws://localhost:8080/ws", nil)
+	if err != nil {
+		return nil, fmt.Errorf("dial error: %v", err)
+	}
+
+	// Set connection parameters
+	conn.SetReadLimit(32768)
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	return conn, nil
+}
 
 func run() {
 	// Connect to WebSocket server
-	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
+	conn, err := connectToServer()
 	if err != nil {
 		log.Fatal("dial:", err)
 	}
 	defer conn.Close()
 	// Define your desired aspect ratio
-	aspectRatio := float64(4) / float64(3) // 4:3 aspect ratio
 
 	// Get the primary monitor's size
 	primaryMonitor := pixelgl.PrimaryMonitor()
 	monitorWidth, monitorHeight := primaryMonitor.Size()
 
 	// Calculate the largest window size that fits on the screen while maintaining the aspect ratio
-	var winWidth, winHeight float64
-	if float64(monitorWidth)/float64(monitorHeight) > aspectRatio {
-		winHeight = monitorHeight * 0.8 // Use 80% of the screen height
-		winWidth = winHeight * aspectRatio
-	} else {
-		winWidth = monitorWidth * 0.8 // Use 80% of the screen width
-		winHeight = winWidth / aspectRatio
-	}
-
+	var winWidth, winHeight = 1152.0, 864.0
 	cfg := pixelgl.WindowConfig{
 		Title:     "Victor's Game",
 		Bounds:    pixel.R(0, 0, winWidth, winHeight),
@@ -99,47 +116,11 @@ func run() {
 		(monitorWidth-winWidth)/2,
 		(monitorHeight-winHeight)/2,
 	))
-	done := make(chan struct{})
+	// done := make(chan struct{})
 	receive := make(chan Message, 100) // Add buffer to prevent blocking
+
 	quit := make(chan struct{})
 	defer close(quit)
-
-	// Connection monitor
-	go func() {
-		defer close(done)
-		for {
-			var msg Message
-			err := conn.ReadJSON(&msg)
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("Unexpected close error: %v", err)
-				}
-				return
-			}
-			select {
-			case receive <- msg:
-			case <-quit:
-				return
-			}
-		}
-	}()
-
-	// Heartbeat to keep connection alive
-	go func() {
-		ticker := time.NewTicker(time.Second * 30)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(time.Second)); err != nil {
-					log.Printf("ping error: %v", err)
-					return
-				}
-			case <-quit:
-				return
-			}
-		}
-	}()
 
 	// Set connection properties
 	conn.SetReadLimit(32768)
@@ -148,40 +129,58 @@ func run() {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
+	go func() {
+		for {
+			var msg Message
+			if err := conn.ReadJSON(&msg); err != nil {
+				log.Println("read error:", err)
+				return
+			}
+			receive <- msg
 
+		}
+	}()
 	nickname, heroClass := createPlayerForm(win)
-	if nickname == "" || heroClass == "" {
+	if nickname == "" || heroClass == 0 {
 		return // Exit if the form was closed without completing
 	}
+	var playerData struct {
+		HeroClass int    `json:"heroClass"`
+		Nickname  string `json:"nickname"`
+	}
+	playerData.HeroClass = heroClass
+	playerData.Nickname = nickname
 	msg := Message{
-		Type: "new_player",
+		Type:    "new_player",
+		Content: playerData,
 	}
 
 	err = conn.WriteJSON(msg)
 	if err != nil {
-		log.Println("write:", err)
+		log.Println("new player write:", err)
 	}
-
-	// Handle incoming messages
-	select {
-	case msg := <-receive:
-		HandleMessage(msg, nil)
-	default:
-		// Continue if no message
+	n := 4000
+	for !playerExists {
+		// Handle incoming messages
+		select {
+		case msg := <-receive:
+			log.Println("new player message:", msg)
+			HandleMessage(msg, nil)
+		default:
+			// Continue if no message
+		}
+		time.Sleep(time.Second / 600)
+		n--
+		if n == 0 {
+			log.Println("Timed out waiting for player")
+			break
+		}
 	}
-
-	var newPlayerClass PlayerClass
-	switch heroClass {
-	case "warrior":
-		newPlayerClass = WarriorClass
-	case "mage":
-		newPlayerClass = MageClass
+	if !playerExists {
+		return
 	}
-	rand.Seed(uint64(time.Now().UnixNano()))
-	randomX := 20 + rand.Float64()*(win.Bounds().Max.X-40)
-	randomY := 20 + rand.Float64()*(win.Bounds().Max.Y-40)
-	player := NewPlayer(pixel.V(randomX, randomY), win.Bounds(), nickname, newPlayerClass)
-
+	//  waitPlayer()
+	player := NewPlayer(pixel.V(startX, startY), win.Bounds(), nickname, playerClass)
 	player.ID = playerID
 	// Game state variables
 	lastTime := time.Now()
@@ -197,27 +196,51 @@ func run() {
 		dt = currentTime.Sub(lastTime).Seconds()
 		lastTime = currentTime
 
-		win.Clear(pixel.RGB(0, 0.5, 0.2))
+		win.Clear(pixel.RGB(0, 0.5, 0.4))
+		movingX, movingY := 0, 0
 
 		// Handle player movement
 		if win.Pressed(pixelgl.KeyW) || win.Pressed(pixelgl.KeyUp) {
-			player.MoveUp()
+			// player.MoveUp()
+			movingY++
 		}
 		if win.Pressed(pixelgl.KeyS) || win.Pressed(pixelgl.KeyDown) {
-			player.MoveDown()
+			// player.MoveDown()
+			movingY--
 		}
 		if win.Pressed(pixelgl.KeyA) || win.Pressed(pixelgl.KeyLeft) {
-			player.MoveLeft()
+			// player.MoveLeft()
+			movingX--
 		}
 		if win.Pressed(pixelgl.KeyD) || win.Pressed(pixelgl.KeyRight) {
-			player.MoveRight()
+			// player.MoveRight()
+			movingX++
 		}
 
 		// Update player direction based on mouse position
 		mousePos := win.MousePosition()
 		direction := mousePos.Sub(player.pos).Unit()
 		player.direction = direction
+		// var myPlayer = &Player{
+		// 	ID:        playerID,
+		// 	health:    playerClass.Health,
+		// 	heroClass: playerClass,
+		// 	direction: direction,
+		// 	radius:    15,
+		// 	imd:       imdraw.New(nil),
+		// }
+		// myPlayer.pos.X = startX
+		// myPlayer.pos.Y = startY
+		// var playerTrack = &OtherPlayer{
+		// 	Player:      myPlayer,
+		// 	LastSeen:    time.Now(),
+		// 	IsAttacking: false,
+		// }
 
+		// mu.Lock()
+		// otherPlayers[playerID] = playerTrack
+		// mu.Unlock()
+		// myPlayer.Draw(win)
 		// Handle incoming messages
 		// Send player state and draw other players at fixed intervals
 		select {
@@ -225,17 +248,19 @@ func run() {
 
 			msg := Message{
 				ClientID: playerID,
-				Type:     "states_update",
-				Content: PlayerState{
-					"id":        player.ID,
-					"pos":       player.pos,
-					"direction": player.direction,
-					"nickname":  player.nickname,
-					"heroClass": heroClass,
+				Type:     "player_moving",
+				Content: map[string]interface{}{
+					"id":         playerID,
+					"directionX": player.direction.X,
+					"directionY": player.direction.Y,
+					// "heroClass":  heroClass,
+					// "nickname": player.nickname,
+					"movingX": movingX,
+					"movingY": movingY,
 				},
 			}
 			if err := conn.WriteJSON(msg); err != nil {
-				log.Println("write:", err)
+				log.Println("states write:", err)
 				return
 			}
 		default:
@@ -245,6 +270,7 @@ func run() {
 		for {
 			select {
 			case msg := <-receive:
+				// log.Println("message:", msg)
 				HandleMessage(msg, &player)
 			default:
 				goto processedMessages
@@ -255,81 +281,94 @@ func run() {
 		// Handle attacks
 		if win.JustPressed(pixelgl.MouseButtonLeft) {
 			// Check attack cooldown
-			if time.Since(time.Unix(0, int64(player.lastAttack))).Seconds() < float64(player.heroClass.AttackSpeed)/1000.0 {
+			// if time.Since(time.Unix(0, int64(player.lastAttack))).Seconds() < float64(player.heroClass.AttackSpeed)/1000.0 {
 
-			} else {
-				player.Attack()
-				player.lastAttack = float64(time.Now().UnixNano())
+			// } else {
+			// if player.heroClass.AttackType == "physical" {
 
-				// Send attack message
-				msg := Message{
-					ClientID: playerID,
-					Type:     "states_update",
-					Content: PlayerState{
-						"id":          player.ID,
-						"pos":         player.pos,
-						"direction":   player.direction,
-						"nickname":    player.nickname,
-						"heroClass":   heroClass,
-						"isAttacking": true,
-					},
-				}
-				if err := conn.WriteJSON(msg); err != nil {
-					log.Println("write:", err)
-					return
-				}
+			// }
+			// player.Atta
+			// ck(conn)
+			// player.lastAttack = float64(time.Now().UnixNano())
+
+			// Send attack message
+			msg := Message{
+				ClientID: playerID,
+				Type:     "player_attack",
+				Content: PlayerState{
+					"id":         player.ID,
+					"directionX": player.direction.X,
+					"directionY": player.direction.Y,
+					"nickname":   player.nickname,
+					// "heroClass":   heroClass,
+					// "isAttacking": true,
+				},
 			}
+			if err := conn.WriteJSON(msg); err != nil {
+				log.Println("write:", err)
+				return
+			}
+			// }
 
 		}
 
 		// Update and draw melee effects
-		remainingEffects := make([]*MeleeEffect, 0)
-		for _, effect := range player.meleeEffects {
-			if effect.Update(dt, player.pos) {
-				effect.Draw(win)
-				remainingEffects = append(remainingEffects, effect)
-			}
-		}
-		player.meleeEffects = remainingEffects
+		// remainingEffects := make([]*MeleeEffect, 0)
+		// for _, effect := range player.meleeEffects {
+		// 	if effect.Update(dt, player.pos) {
+		// 		effect.Draw(win)
+		// 		remainingEffects = append(remainingEffects, effect)
+		// 	}
+		// }
+		// player.meleeEffects = remainingEffects
 
-		// Update and draw projectiles
-		remainingProjectiles := make([]*Projectile, 0)
-		for _, proj := range player.projectiles {
-			if proj.Update() {
-				proj.Draw(win)
-				remainingProjectiles = append(remainingProjectiles, proj)
-			}
-		}
+		// // Update and draw projectiles
+		// remainingProjectiles := make([]*Projectile, 0)
+		// for _, proj := range player.projectiles {
+		// 	upd, _ := proj.Update()
+		// 	if upd {
+		// 		proj.Draw(win)
+		// 		remainingProjectiles = append(remainingProjectiles, proj)
+		// 	}
+		// }
 
-		// Draw other players every frame
+		// // Draw other players every frame
 		DrawOtherPlayers(win)
-		mu.Lock()
-		for _, other := range otherPlayers {
-			// Update and draw other player's melee effects
-			otherRemainingEffects := make([]*MeleeEffect, 0)
-			for _, effect := range other.Player.meleeEffects {
-				if effect.Update(dt, other.Player.pos) {
-					effect.Draw(win)
-					otherRemainingEffects = append(otherRemainingEffects, effect)
-				}
-			}
-			other.Player.meleeEffects = otherRemainingEffects
+		// mu.Lock()
+		// for _, other := range otherPlayers {
+		// 	// Update and draw other player's melee effects
+		// 	otherRemainingEffects := make([]*MeleeEffect, 0)
+		// 	for _, effect := range other.Player.meleeEffects {
+		// 		if effect.Update(dt, other.Player.pos) {
+		// 			effect.Draw(win)
+		// 			otherRemainingEffects = append(otherRemainingEffects, effect)
+		// 		}
+		// 	}
+		// 	other.Player.meleeEffects = otherRemainingEffects
 
-			// Update and draw other player's projectiles
-			otherRemainingProjectiles := make([]*Projectile, 0)
-			for _, proj := range other.Player.projectiles {
-				if proj.Update() {
-					proj.Draw(win)
-					otherRemainingProjectiles = append(otherRemainingProjectiles, proj)
-				}
-			}
-			other.Player.projectiles = otherRemainingProjectiles
-		}
-		mu.Unlock()
+		// 	// Update and draw other player's projectiles
+		// 	otherRemainingProjectiles := make([]*Projectile, 0)
+		// 	for _, proj := range other.Player.projectiles {
+		// 		upd, _ := proj.Update()
+		// 		if upd {
+		// 			proj.Draw(win)
+		// 			otherRemainingProjectiles = append(otherRemainingProjectiles, proj)
+		// 		}
+		// 	}
+		// 	other.Player.projectiles = otherRemainingProjectiles
+		// }
+
 		// Draw player
-		player.Draw(win)
+		// player.Draw(win)
 
 		win.Update()
 
+	}
+}
+
+func waitPlayer() {
+	if !playerExists {
+		time.Sleep(time.Second / 600)
+		waitPlayer()
 	}
 }

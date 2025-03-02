@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/gopxl/pixel"
 	"github.com/gopxl/pixel/imdraw"
 	"github.com/gopxl/pixel/pixelgl"
 	"github.com/gopxl/pixel/text"
+	"github.com/gorilla/websocket"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/font/gofont/goregular"
@@ -16,36 +18,38 @@ import (
 
 // Add JSON tags to the Player struct
 type Player struct {
-	ID           int            `json:"id"`
-	pos          pixel.Vec      `json:"pos"`
-	speed        float64        `json:"speed"`
-	radius       float64        `json:"radius"`
-	imd          *imdraw.IMDraw `json:"-"` // Skip serialization
-	bounds       pixel.Rect     `json:"-"` // Skip serialization
-	nickname     string         `json:"nickname"`
-	heroClass    PlayerClass    `json:"heroClass"`
-	direction    pixel.Vec      `json:"direction"`
-	projectiles  []*Projectile  `json:"-"` // Skip serialization
-	lastAttack   float64        `json:"lastAttack"`
-	meleeEffects []*MeleeEffect `json:"-"` // Skip serialization
+	ID        int            `json:"id"`
+	pos       pixel.Vec      `json:"pos"`
+	speed     float64        `json:"speed"`
+	radius    float64        `json:"radius"`
+	imd       *imdraw.IMDraw `json:"-"` // Skip serialization
+	bounds    pixel.Rect     `json:"-"` // Skip serialization
+	nickname  string         `json:"nickname"`
+	heroClass int            `json:"heroClass"`
+	direction pixel.Vec      `json:"direction"`
+	// projectiles  []*Projectile  `json:"-"` // Skip serialization
+	lastAttack float64 `json:"lastAttack"`
+	// meleeEffects []*MeleeEffect `json:"-"`      // Skip serialization
+	// explosions   []*Explosion   `json:"-"`      // Skip serialization
+	health int `json:"health"` //
 }
 
 // Add custom JSON marshaling methods
 func (p *Player) MarshalJSON() ([]byte, error) {
 	type Alias struct {
-		ID        int         `json:"id"`
-		Pos       pixel.Vec   `json:"pos"`
-		Speed     float64     `json:"speed"`
-		Radius    float64     `json:"radius"`
-		Nickname  string      `json:"nickname"`
-		HeroClass PlayerClass `json:"heroClass"`
-		Direction pixel.Vec   `json:"direction"`
+		ID        int       `json:"id"`
+		Pos       pixel.Vec `json:"pos"`
+		Speed     float64   `json:"speed"`
+		Radius    float64   `json:"radius"`
+		Nickname  string    `json:"nickname"`
+		HeroClass int       `json:"heroClass"`
+		Direction pixel.Vec `json:"direction"`
 	}
 
 	return json.Marshal(&Alias{
-		ID:        p.ID,
-		Pos:       p.pos,
-		Speed:     p.speed,
+		ID:  p.ID,
+		Pos: p.pos,
+		// Speed:     p.speed,
 		Radius:    p.radius,
 		Nickname:  p.nickname,
 		HeroClass: p.heroClass,
@@ -56,13 +60,13 @@ func (p *Player) MarshalJSON() ([]byte, error) {
 // Add custom JSON unmarshaling method
 func (p *Player) UnmarshalJSON(data []byte) error {
 	type Alias struct {
-		ID        int         `json:"id"`
-		Pos       pixel.Vec   `json:"pos"`
-		Speed     float64     `json:"speed"`
-		Radius    float64     `json:"radius"`
-		Nickname  string      `json:"nickname"`
-		HeroClass PlayerClass `json:"heroClass"`
-		Direction pixel.Vec   `json:"direction"`
+		ID        int       `json:"id"`
+		Pos       pixel.Vec `json:"pos"`
+		Speed     float64   `json:"speed"`
+		Radius    float64   `json:"radius"`
+		Nickname  string    `json:"nickname"`
+		HeroClass int       `json:"heroClass"`
+		Direction pixel.Vec `json:"direction"`
 	}
 
 	aux := &Alias{}
@@ -80,55 +84,89 @@ func (p *Player) UnmarshalJSON(data []byte) error {
 
 	// Initialize non-serializable fields
 	p.imd = imdraw.New(nil)
-	p.projectiles = make([]*Projectile, 0)
-	p.meleeEffects = make([]*MeleeEffect, 0)
+	// p.projectiles = make([]*Projectile, 0)
+	// p.meleeEffects = make([]*MeleeEffect, 0)
 
 	return nil
 }
 
-type PlayerClass struct {
-	MagicResistance    float64
-	PhysicalResistance float64
-	Health             int
-	Attack             int
-	AttackRange        float64
-	AttackSpeed        int
-	AttackType         string
+// type PlayerClass struct {
+// 	ID                 int     `json:"id"`
+// 	MagicResistance    float64 `json:"magicResistance"`
+// 	PhysicalResistance float64 `json:"physicalResistance"`
+// 	Health             int     `json:"health"`
+// 	Attack             int     `json:"attack"`
+// 	AttackRange        float64 `json:"attackRange"`
+// 	AttackSpeed        int     `json:"attackSpeed"`
+// 	AttackType         string  `json:"attackType"`
+// }
+
+// Add after other type declarations
+type Explosion struct {
+	pos       pixel.Vec
+	radius    float64
+	maxRadius float64
+	lifetime  float64
+	maxLife   float64
+	imd       *imdraw.IMDraw
 }
 
-var MageClass = PlayerClass{
-	MagicResistance:    0.3,
-	PhysicalResistance: 0,
-	Health:             100,
-	Attack:             30,
-	AttackRange:        200,
-	AttackSpeed:        200,
-	AttackType:         "magic",
+func NewExplosion(pos pixel.Vec) *Explosion {
+	return &Explosion{
+		pos:       pos,
+		radius:    5,
+		maxRadius: 30,
+		lifetime:  0,
+		maxLife:   0.3, // 0.3 seconds duration
+		imd:       imdraw.New(nil),
+	}
 }
 
-var WarriorClass = PlayerClass{
-	MagicResistance:    0,
-	PhysicalResistance: 0.5,
-	Health:             150,
-	Attack:             20,
-	AttackRange:        50,
-	AttackSpeed:        500,
-	AttackType:         "physical",
+func (e *Explosion) Update(dt float64) bool {
+	e.lifetime += dt
+	if e.lifetime > e.maxLife {
+		return false
+	}
+
+	// Expand radius until maxRadius
+	progress := e.lifetime / e.maxLife
+	e.radius = e.maxRadius * progress
+	return true
 }
 
-func NewPlayer(pos pixel.Vec, bounds pixel.Rect, nickname string, heroClass PlayerClass) Player {
+func (e *Explosion) Draw(win pixel.Target) {
+	e.imd.Clear()
+
+	// Fade out as explosion expands
+	alpha := 1.0 - (e.lifetime / e.maxLife)
+	e.imd.Color = pixel.RGBA{R: 0.2, G: 0.2, B: 1, A: alpha}
+
+	e.imd.Push(e.pos)
+	e.imd.Circle(e.radius, 0)
+	e.imd.Draw(win)
+}
+func NewPlayer(pos pixel.Vec, bounds pixel.Rect, nickname string, heroClass int) Player {
+	// var health int
+	// switch heroClass {
+	// case WarriorClass:
+	// 	health = 150
+	// case MageClass:
+	// 	health = 100
+	// }
 	return Player{
-		pos:          pos,
-		speed:        0.3,
-		radius:       15,
-		imd:          imdraw.New(nil),
-		bounds:       bounds,
-		nickname:     nickname,
-		heroClass:    heroClass,
-		direction:    pixel.V(1, 0), // Default direction pointing right
-		projectiles:  make([]*Projectile, 0),
-		meleeEffects: make([]*MeleeEffect, 0),
-		lastAttack:   0,
+		pos:       pos,
+		speed:     0.3,
+		radius:    15,
+		imd:       imdraw.New(nil),
+		bounds:    bounds,
+		nickname:  nickname,
+		heroClass: heroClass,
+		direction: pixel.V(1, 0), // Default direction pointing right
+		// projectiles:  make([]*Projectile, 0),
+		// meleeEffects: make([]*MeleeEffect, 0),
+		// explosions:   make([]*Explosion, 0),
+		lastAttack: 0,
+		// health:       health,
 	}
 }
 
@@ -142,9 +180,9 @@ func (p *Player) Draw(win *pixelgl.Window) {
 	p.imd.Clear()
 
 	// Set player color based on hero class before drawing
-	if p.heroClass == WarriorClass {
+	if p.heroClass == 1 {
 		p.imd.Color = pixel.RGB(1, 0.2, 0.2) // Red for warrior
-	} else if p.heroClass == MageClass {
+	} else if p.heroClass == 2 {
 		p.imd.Color = pixel.RGB(0.2, 0.2, 1) // Blue for mage
 	}
 	// Draw the player circle
@@ -174,28 +212,42 @@ func (p *Player) Draw(win *pixelgl.Window) {
 
 	fmt.Fprintln(nicknameText, p.nickname)
 	nicknameText.Draw(win, pixel.IM)
-
+	log.Println(p)
 	// Draw projectiles for mage class
-	if p.heroClass == MageClass {
-		remainingProjectiles := []*Projectile{}
-		for _, proj := range p.projectiles {
-			if proj.Update() {
-				proj.Draw(win)
-				remainingProjectiles = append(remainingProjectiles, proj)
-			}
-		}
-		p.projectiles = remainingProjectiles
-	}
+	// if p.heroClass.ID == 1 {
+	// 	remainingProjectiles := []*Projectile{}
+	// 	for _, proj := range p.projectiles {
+	// 		alive, explodePos := proj.Update()
+	// 		if alive {
+	// 			proj.Draw(win)
+	// 			remainingProjectiles = append(remainingProjectiles, proj)
+	// 		} else if !explodePos.Eq(pixel.Vec{}) {
+	// 			// Create explosion at projectile's end position
+	// 			p.explosions = append(p.explosions, NewExplosion(explodePos))
+	// 		}
+	// 	}
+	// 	p.projectiles = remainingProjectiles
+	// }
 
-	// Draw melee effects
-	remainingEffects := []*MeleeEffect{}
-	for _, effect := range p.meleeEffects {
-		if effect.Update(1.0/60.0, p.pos) { // Assuming 60 FPS
-			effect.Draw(win)
-			remainingEffects = append(remainingEffects, effect)
-		}
-	}
-	p.meleeEffects = remainingEffects
+	// // Draw and update explosions
+	// remainingExplosions := []*Explosion{}
+	// for _, explosion := range p.explosions {
+	// 	if explosion.Update(1.0 / 60.0) { // Assuming 60 FPS
+	// 		explosion.Draw(win)
+	// 		remainingExplosions = append(remainingExplosions, explosion)
+	// 	}
+	// }
+	// p.explosions = remainingExplosions
+
+	// // Draw melee effects
+	// remainingEffects := []*MeleeEffect{}
+	// for _, effect := range p.meleeEffects {
+	// 	if effect.Update(1.0/60.0, p.pos) { // Assuming 60 FPS
+	// 		effect.Draw(win)
+	// 		remainingEffects = append(remainingEffects, effect)
+	// 	}
+	// }
+	// p.meleeEffects = remainingEffects
 }
 
 // Update the movement methods to adjust the direction
@@ -231,23 +283,33 @@ func (p *Player) MoveRight() {
 	}
 }
 
-func (p *Player) Attack() {
+func (p *Player) Attack(conn *websocket.Conn) {
 
-	if p.heroClass.AttackType == "magic" {
-		// Create new projectile
-		projectile := NewProjectile(
-			p.pos,
-			p.direction,
-			float64(p.heroClass.AttackRange),
-		)
-		p.projectiles = append(p.projectiles, projectile)
-	} else if p.heroClass.AttackType == "physical" {
-		effect := NewMeleeEffect(p.pos, p.heroClass.AttackRange)
-		p.meleeEffects = append(p.meleeEffects, effect)
+	// Create local projectile
+	// projectile := NewProjectile(
+	// 	p.pos,
+	// 	p.direction,
+	// 	float64(p.heroClass.AttackRange),
+	// )
+	// p.projectiles = append(p.projectiles, projectile)
+
+	// Send projectile creation message to server
+	msg := Message{
+		Type: "projectile",
+		Content: map[string]interface{}{
+			"pos":       p.pos,
+			"direction": p.direction,
+			// "maxRange":  float64(p.heroClass.AttackRange),
+		},
+	}
+	// You'll need to access the WebSocket connection here
+	if p.ID == playerID {
+		conn.WriteJSON(msg)
 	}
 
 }
-func createPlayerForm(win *pixelgl.Window) (string, string) {
+
+func createPlayerForm(win *pixelgl.Window) (string, int) {
 	// Replace basicfont with custom sized font
 	face, err := opentype.Parse(goregular.TTF)
 	if err != nil {
@@ -270,8 +332,7 @@ func createPlayerForm(win *pixelgl.Window) (string, string) {
 	buttonWarrior := NewButton(pixel.V(400, 350), "Warrior", atlas, 1, 0, 0)
 	buttonMage := NewButton(pixel.V(500, 350), "Mage", atlas, 0, 0, 1)
 
-	nickname := ""
-	heroClass := ""
+	heroClass := 0
 	selectedField := "nickname"
 
 	for !win.Closed() {
@@ -297,11 +358,11 @@ func createPlayerForm(win *pixelgl.Window) (string, string) {
 		}
 
 		if buttonWarrior.IsClicked(win) && nickname != "" {
-			heroClass = "warrior"
+			heroClass = 1
 			return nickname, heroClass
 		}
 		if buttonMage.IsClicked(win) && nickname != "" {
-			heroClass = "mage"
+			heroClass = 2
 			return nickname, heroClass
 		}
 
@@ -313,14 +374,12 @@ func createPlayerForm(win *pixelgl.Window) (string, string) {
 
 		if selectedField == "nickname" {
 			nickname += win.Typed()
-		} else {
-			heroClass += win.Typed()
 		}
 
 		win.Update()
 	}
 
-	return "", ""
+	return "", 0
 }
 
 // Add this new struct at the top with other type declarations
@@ -357,7 +416,6 @@ func NewMeleeEffect(pos pixel.Vec, r float64) *MeleeEffect {
 		imd:      imdraw.New(nil),
 		lifetime: 0,
 		maxLife:  0.5, // half second duration
-
 	}
 }
 
@@ -386,14 +444,16 @@ func NewProjectile(pos pixel.Vec, direction pixel.Vec, maxRange float64) *Projec
 }
 
 // Add this method to draw and update projectiles
-func (p *Projectile) Update() bool {
-	// Move projectile
+func (p *Projectile) Update() (bool, pixel.Vec) {
 	movement := p.direction.Scaled(p.speed)
 	p.pos = p.pos.Add(movement)
 	p.distance += movement.Len()
 
-	// Return false if projectile exceeded its range
-	return p.distance <= p.maxRange
+	// Return position for explosion if projectile reached max range
+	if p.distance >= p.maxRange {
+		return false, p.pos
+	}
+	return true, pixel.Vec{}
 }
 
 func (p *Projectile) Draw(win pixel.Target) {

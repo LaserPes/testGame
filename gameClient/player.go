@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/gopxl/pixel"
 	"github.com/gopxl/pixel/imdraw"
@@ -18,20 +17,20 @@ import (
 
 // Add JSON tags to the Player struct
 type Player struct {
-	ID        int            `json:"id"`
-	pos       pixel.Vec      `json:"pos"`
-	speed     float64        `json:"speed"`
-	radius    float64        `json:"radius"`
-	imd       *imdraw.IMDraw `json:"-"` // Skip serialization
-	bounds    pixel.Rect     `json:"-"` // Skip serialization
-	nickname  string         `json:"nickname"`
-	heroClass int            `json:"heroClass"`
-	direction pixel.Vec      `json:"direction"`
+	ID        int
+	pos       pixel.Vec
+	speed     float64
+	radius    float64
+	imd       *imdraw.IMDraw
+	bounds    pixel.Rect
+	nickname  string
+	heroClass int
+	direction pixel.Vec
 	// projectiles  []*Projectile  `json:"-"` // Skip serialization
-	lastAttack float64 `json:"lastAttack"`
+	lastAttack float64
 	// meleeEffects []*MeleeEffect `json:"-"`      // Skip serialization
 	// explosions   []*Explosion   `json:"-"`      // Skip serialization
-	health int `json:"health"` //
+	health int
 }
 
 // Add custom JSON marshaling methods
@@ -154,8 +153,8 @@ func NewPlayer(pos pixel.Vec, bounds pixel.Rect, nickname string, heroClass int)
 	// 	health = 100
 	// }
 	return Player{
-		pos:       pos,
-		speed:     0.3,
+		pos: pos,
+		// speed:     0.3,
 		radius:    15,
 		imd:       imdraw.New(nil),
 		bounds:    bounds,
@@ -175,79 +174,52 @@ func (p *Player) Draw(win *pixelgl.Window) {
 	if p.imd == nil {
 		p.imd = imdraw.New(nil)
 	}
-
-	// Clear IMDraw at the start
 	p.imd.Clear()
-
-	// Set player color based on hero class before drawing
+	// Draw outer circle with class color
 	if p.heroClass == 1 {
 		p.imd.Color = pixel.RGB(1, 0.2, 0.2) // Red for warrior
 	} else if p.heroClass == 2 {
 		p.imd.Color = pixel.RGB(0.2, 0.2, 1) // Blue for mage
 	}
-	// Draw the player circle
 	p.imd.Push(p.pos)
-	p.imd.Circle(p.radius, 0)
+	p.imd.Circle(p.radius, 0) // Use outline for outer circle
 
-	p.imd.Draw(win)
-
-	// Draw direction indicator (stick) with the same color
+	// Draw direction indicator (stick) with the same color as outer circle
 	stickEnd := p.pos.Add(p.direction.Scaled(p.radius * 1.5))
-	p.imd.Clear()
 	p.imd.Push(p.pos, stickEnd)
 	p.imd.Line(2)
+
+	// Draw everything at once
 	p.imd.Draw(win)
 
-	// Draw nickname text with better contrast
+	// Draw nickname text
 	atlas := text.NewAtlas(basicfont.Face7x13, text.ASCII)
 	nicknameText := text.New(pixel.V(
-		p.pos.X-float64(len(p.nickname)*3), // Center text horizontally
-		p.pos.Y+p.radius+5),                // Place text above player
+		p.pos.X-float64(len(p.nickname)*3),
+		p.pos.Y+p.radius+5),
 		atlas)
 	if p.ID == playerID {
 		nicknameText.Color = pixel.RGB(1, 1, 1)
 	} else {
 		nicknameText.Color = pixel.RGB(0, 0, 0)
 	}
-
 	fmt.Fprintln(nicknameText, p.nickname)
 	nicknameText.Draw(win, pixel.IM)
-	log.Println(p)
-	// Draw projectiles for mage class
-	// if p.heroClass.ID == 1 {
-	// 	remainingProjectiles := []*Projectile{}
-	// 	for _, proj := range p.projectiles {
-	// 		alive, explodePos := proj.Update()
-	// 		if alive {
-	// 			proj.Draw(win)
-	// 			remainingProjectiles = append(remainingProjectiles, proj)
-	// 		} else if !explodePos.Eq(pixel.Vec{}) {
-	// 			// Create explosion at projectile's end position
-	// 			p.explosions = append(p.explosions, NewExplosion(explodePos))
-	// 		}
-	// 	}
-	// 	p.projectiles = remainingProjectiles
-	// }
+	// Clear IMDraw once at the start
 
-	// // Draw and update explosions
-	// remainingExplosions := []*Explosion{}
-	// for _, explosion := range p.explosions {
-	// 	if explosion.Update(1.0 / 60.0) { // Assuming 60 FPS
-	// 		explosion.Draw(win)
-	// 		remainingExplosions = append(remainingExplosions, explosion)
-	// 	}
-	// }
-	// p.explosions = remainingExplosions
+	// Draw HP circle (inner circle)
+	var maxHP int
+	if p.heroClass == 1 {
+		maxHP = 150
+	} else if p.heroClass == 2 {
+		maxHP = 100
+	}
+	redBar := (float64(maxHP) - float64(p.health)) / float64(maxHP)
+	greenBar := float64(p.health) / float64(maxHP)
+	p.imd.Color = pixel.RGB(redBar, greenBar, 0)
+	p.imd.Push(p.pos)
+	p.imd.Circle(p.radius-5, 0) // Smaller radius for HP indicator
 
-	// // Draw melee effects
-	// remainingEffects := []*MeleeEffect{}
-	// for _, effect := range p.meleeEffects {
-	// 	if effect.Update(1.0/60.0, p.pos) { // Assuming 60 FPS
-	// 		effect.Draw(win)
-	// 		remainingEffects = append(remainingEffects, effect)
-	// 	}
-	// }
-	// p.meleeEffects = remainingEffects
 }
 
 // Update the movement methods to adjust the direction

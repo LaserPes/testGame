@@ -219,7 +219,7 @@ func run() {
 
 		// Update player direction based on mouse position
 		mousePos := win.MousePosition()
-		direction := mousePos.Sub(player.pos).Unit()
+		direction := mousePos
 		player.direction = direction
 		// var myPlayer = &Player{
 		// 	ID:        playerID,
@@ -262,6 +262,7 @@ func run() {
 			if err := conn.WriteJSON(msg); err != nil {
 				log.Println("states write:", err)
 				return
+
 			}
 		default:
 		}
@@ -308,58 +309,11 @@ func run() {
 				log.Println("write:", err)
 				return
 			}
-			// }
 
 		}
 
-		// Update and draw melee effects
-		// remainingEffects := make([]*MeleeEffect, 0)
-		// for _, effect := range player.meleeEffects {
-		// 	if effect.Update(dt, player.pos) {
-		// 		effect.Draw(win)
-		// 		remainingEffects = append(remainingEffects, effect)
-		// 	}
-		// }
-		// player.meleeEffects = remainingEffects
-
-		// // Update and draw projectiles
-		// remainingProjectiles := make([]*Projectile, 0)
-		// for _, proj := range player.projectiles {
-		// 	upd, _ := proj.Update()
-		// 	if upd {
-		// 		proj.Draw(win)
-		// 		remainingProjectiles = append(remainingProjectiles, proj)
-		// 	}
-		// }
-
-		// // Draw other players every frame
+		// // Draw all players every frame
 		DrawOtherPlayers(win)
-		// mu.Lock()
-		// for _, other := range otherPlayers {
-		// 	// Update and draw other player's melee effects
-		// 	otherRemainingEffects := make([]*MeleeEffect, 0)
-		// 	for _, effect := range other.Player.meleeEffects {
-		// 		if effect.Update(dt, other.Player.pos) {
-		// 			effect.Draw(win)
-		// 			otherRemainingEffects = append(otherRemainingEffects, effect)
-		// 		}
-		// 	}
-		// 	other.Player.meleeEffects = otherRemainingEffects
-
-		// 	// Update and draw other player's projectiles
-		// 	otherRemainingProjectiles := make([]*Projectile, 0)
-		// 	for _, proj := range other.Player.projectiles {
-		// 		upd, _ := proj.Update()
-		// 		if upd {
-		// 			proj.Draw(win)
-		// 			otherRemainingProjectiles = append(otherRemainingProjectiles, proj)
-		// 		}
-		// 	}
-		// 	other.Player.projectiles = otherRemainingProjectiles
-		// }
-
-		// Draw player
-		// player.Draw(win)
 
 		win.Update()
 

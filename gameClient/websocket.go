@@ -99,7 +99,7 @@ func HandleMessage(msg Message, player *Player) {
 
 		mu.Lock()
 		for id, state := range statePlayers {
-			log.Println("got state: ", state)
+			// log.Println("got state: ", state)
 			// Skip our own state
 			if id == playerID {
 				playerHP = player.health
@@ -145,9 +145,9 @@ func HandleMessage(msg Message, player *Player) {
 			other, exists := otherPlayers[id]
 			if !exists {
 				newPlayer := &Player{
-					ID:     id,
-					imd:    imdraw.New(nil),
-					speed:  0.3,
+					ID:  id,
+					imd: imdraw.New(nil),
+					// speed:  0.3,
 					radius: 15,
 					health: health,
 				}
@@ -158,7 +158,8 @@ func HandleMessage(msg Message, player *Player) {
 			}
 
 			other.Player.pos = pos
-			other.Player.direction = dir
+			other.Player.direction = dir.Sub(pos).Unit()
+			// log.Println(dir.Sub(pos).Unit())
 			other.Player.nickname = nickname
 			other.Player.heroClass = heroClass
 

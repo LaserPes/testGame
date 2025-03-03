@@ -210,8 +210,8 @@ func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan
 			mu.Lock()
 			if state, exists := latestStates[movement.ID]; exists {
 				// Update player position based on movement
-				state.PosX += float64(movement.MovingX) * 10 //float64(latestStates[movement.ID].HeroClass.Speed)
-				state.PosY += float64(movement.MovingY) * 10 //float64(latestStates[movement.ID].HeroClass.Speed)
+				state.PosX += float64(movement.MovingX) * 2 //float64(latestStates[movement.ID].HeroClass.Speed)
+				state.PosY += float64(movement.MovingY) * 2 //float64(latestStates[movement.ID].HeroClass.Speed)
 				state.DirectionX = movement.DirectionX
 				state.DirectionY = movement.DirectionY
 				latestStates[movement.ID] = state

@@ -174,7 +174,23 @@ func (p *Player) Draw(win *pixelgl.Window) {
 	if p.imd == nil {
 		p.imd = imdraw.New(nil)
 	}
+
+	// Clear IMDraw once at the start
 	p.imd.Clear()
+
+	// Draw HP circle (inner circle)
+	var maxHP int
+	if p.heroClass == 1 {
+		maxHP = 150
+	} else if p.heroClass == 2 {
+		maxHP = 100
+	}
+	redBar := (float64(maxHP) - float64(p.health)) / float64(maxHP)
+	greenBar := float64(p.health) / float64(maxHP)
+	p.imd.Color = pixel.RGB(redBar, greenBar, 0)
+	p.imd.Push(p.pos)
+	p.imd.Circle(p.radius-5, 0) // Smaller radius for HP indicator
+
 	// Draw outer circle with class color
 	if p.heroClass == 1 {
 		p.imd.Color = pixel.RGB(1, 0.2, 0.2) // Red for warrior
@@ -182,7 +198,7 @@ func (p *Player) Draw(win *pixelgl.Window) {
 		p.imd.Color = pixel.RGB(0.2, 0.2, 1) // Blue for mage
 	}
 	p.imd.Push(p.pos)
-	p.imd.Circle(p.radius, 0) // Use outline for outer circle
+	p.imd.Circle(p.radius, 1) // Use outline for outer circle
 
 	// Draw direction indicator (stick) with the same color as outer circle
 	stickEnd := p.pos.Add(p.direction.Scaled(p.radius * 1.5))
@@ -205,21 +221,6 @@ func (p *Player) Draw(win *pixelgl.Window) {
 	}
 	fmt.Fprintln(nicknameText, p.nickname)
 	nicknameText.Draw(win, pixel.IM)
-	// Clear IMDraw once at the start
-
-	// Draw HP circle (inner circle)
-	var maxHP int
-	if p.heroClass == 1 {
-		maxHP = 150
-	} else if p.heroClass == 2 {
-		maxHP = 100
-	}
-	redBar := (float64(maxHP) - float64(p.health)) / float64(maxHP)
-	greenBar := float64(p.health) / float64(maxHP)
-	p.imd.Color = pixel.RGB(redBar, greenBar, 0)
-	p.imd.Push(p.pos)
-	p.imd.Circle(p.radius-5, 0) // Smaller radius for HP indicator
-
 }
 
 // Update the movement methods to adjust the direction

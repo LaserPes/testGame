@@ -27,6 +27,7 @@ type Message struct {
 
 // Add these constants at the top of the file
 const (
+	tickRate              = time.Second / 30
 	broadcastQueueSize    = 512
 	readBufferSize        = 1024
 	writeBufferSize       = 1024
@@ -39,7 +40,8 @@ var (
 
 	clients      = make(map[*Client]bool)
 	latestStates = make(map[int]PlayerState) // Хранение последнего состояния каждого игрока
-	upgrader     = websocket.Upgrader{
+
+	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 )
@@ -54,20 +56,8 @@ func (c1 Circle) Intersects(c2 Circle) bool {
 	return distance <= (c1.Radius + c2.Radius)
 }
 
-// func main() {
-// 	c1 := Circle{X: 0, Y: 0, Radius: 5}
-// 	c2 := Circle{X: 7, Y: 0, Radius: 3}
-
-//		if c1.Intersects(c2) {
-//			fmt.Println("Окружности пересекаются")
-//		} else {
-//			fmt.Println("Окружности не пересекаются")
-//		}
-//	}
-//
 // Add a buffered channel for broadcasts
 var broadcast = make(chan Message, broadcastQueueSize)
-var projectileManager = NewProjectileManager()
 
 // Calculate the largest window size that fits on the screen while maintaining the aspect ratio
 var winWidth, winHeight = 1152.0, 864.0
@@ -86,6 +76,7 @@ func main() {
 
 	go handleMessages(clients, broadcast, errChan)
 	go updateProjectiles()
+
 	go broadcastLatestStates()
 	ID := 1
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -210,16 +201,30 @@ func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan
 			mu.Lock()
 			if state, exists := latestStates[movement.ID]; exists {
 				// Update player position based on movement
-				state.PosX += float64(movement.MovingX) * 2 //float64(latestStates[movement.ID].HeroClass.Speed)
-				state.PosY += float64(movement.MovingY) * 2 //float64(latestStates[movement.ID].HeroClass.Speed)
-				state.DirectionX = movement.DirectionX
-				state.DirectionY = movement.DirectionY
-				latestStates[movement.ID] = state
+				if 1 >= movement.MovingX && movement.MovingX >= -1 && 1 >= movement.MovingY && movement.MovingY >= -1 {
+					if (state.PosX-15) >= 0 && movement.MovingX == -1 {
+						state.PosX += float64(movement.MovingX) * (float64(classMap[latestStates[movement.ID].HeroClass].Speed) / 100)
+					}
+					if (state.PosX+15) <= winWidth && movement.MovingX == 1 {
+						state.PosX += float64(movement.MovingX) * (float64(classMap[latestStates[movement.ID].HeroClass].Speed) / 100)
+					}
+					if (state.PosY-15) >= 0 && movement.MovingY == -1 {
+						state.PosY += float64(movement.MovingY) * (float64(classMap[latestStates[movement.ID].HeroClass].Speed) / 100)
+					}
+					if (state.PosY+15) <= winHeight && movement.MovingY == 1 {
+						state.PosY += float64(movement.MovingY) * (float64(classMap[latestStates[movement.ID].HeroClass].Speed) / 100)
+					}
 
+					state.DirectionX = movement.DirectionX
+					state.DirectionY = movement.DirectionY
+					latestStates[movement.ID] = state
+					// log.Println("00000", state)
+				}
 			}
 			mu.Unlock()
 
 		case "player_attack":
+			log.Println("player attack: ", msg)
 			var attack PlayerAttack
 			data, err := json.Marshal(msg.Content)
 			if err != nil {
@@ -231,47 +236,35 @@ func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan
 				log.Printf("Error unmarshaling attack data: %v", err)
 				return
 			}
+
+			// state.IsAttacking = true
+			mu.Lock()
 			if state, exists := latestStates[attack.ID]; exists {
-				// Update player position based on movement
-				state.DirectionX = attack.DirectionX
-				state.DirectionY = attack.DirectionY
-				if time.Since(time.Unix(0, int64(state.LastAttack))).Seconds() < float64(classMap[state.HeroClass].AttackSpeed)/1000.0 {
-					state.IsAttacking = true
+				if time.Since(state.LastAttack).Seconds() >= float64(classMap[state.HeroClass].AttackSpeed)/1000.0 {
+					// Update player position based on movement
+					pos := Vec2D{
+						X: state.PosX,
+						Y: state.PosY,
+					}
+					dir := Vec2D{
+						X: attack.DirectionX,
+						Y: attack.DirectionY,
+					}
+					if classMap[state.HeroClass].AttackType == "magic" {
+						log.Println("magic attack:", attack.ID, pos, dir)
+						AddProjectile(attack.ID, pos, dir, classMap[state.HeroClass].AttackRange)
+					} else if classMap[state.HeroClass].AttackType == "physical" {
+						log.Println("melee attack:", attack.ID, pos, dir)
+						AddMelee(attack.ID, pos, classMap[state.HeroClass].AttackRange)
+					}
+
+					state.DirectionX = attack.DirectionX
+					state.DirectionY = attack.DirectionY
+					state.LastAttack = time.Now()
+					latestStates[attack.ID] = state
 				}
-
-				latestStates[attack.ID] = state
-
 			}
-			// case "projectile":
-			// 	if content, ok := msg.Content.(map[string]interface{}); ok {
-			// 		pos := Vec2D{}
-			// 		dir := Vec2D{}
-			// 		var maxRange float64
-
-			// 		if posMap, ok := content["pos"].(map[string]interface{}); ok {
-			// 			if x, ok := posMap["X"].(float64); ok {
-			// 				pos.X = x
-			// 			}
-			// 			if y, ok := posMap["Y"].(float64); ok {
-			// 				pos.Y = y
-			// 			}
-			// 		}
-
-			// 		if dirMap, ok := content["direction"].(map[string]interface{}); ok {
-			// 			if x, ok := dirMap["X"].(float64); ok {
-			// 				dir.X = x
-			// 			}
-			// 			if y, ok := dirMap["Y"].(float64); ok {
-			// 				dir.Y = y
-			// 			}
-			// 		}
-
-			// 		if r, ok := content["maxRange"].(float64); ok {
-			// 			maxRange = r
-			// 		}
-
-			// 		projectileManager.AddProjectile(client.Id, pos, dir, maxRange)
-			// 	}
+			mu.Unlock()
 		}
 	}
 	defer func() {
@@ -316,7 +309,7 @@ func handleMessages(clients map[*Client]bool, broadcast chan Message, errChan ch
 }
 
 func broadcastLatestStates() {
-	ticker := time.NewTicker(time.Second / 20) // Частота отправки
+	ticker := time.NewTicker(tickRate)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -341,28 +334,100 @@ func broadcastLatestStates() {
 					delete(latestStates, client.Id)
 				}
 
-				log.Println("State update: ", msg)
+				// log.Println("State update: ", msg)
 
 			}
 
 		}
+
 		mu.Unlock()
 	}
 }
 func updateProjectiles() {
-	ticker := time.NewTicker(time.Second / 60) // 60 updates per second
+	ticker := time.NewTicker(tickRate)
 	defer ticker.Stop()
-
+	var noRepeat bool
 	for range ticker.C {
-		// projectileManager.Update()
-
+		projUpdate()
 		// Broadcast projectile states to all clients
-		state := projectileManager.GetProjectilesState()
-		if len(state) > 0 {
+		// states := GetProjectilesStates()
+		pmu.Lock()
+		//  log.Println("Projectiles len: ", projectiles)
+
+		if len(projectiles) > 0 {
+			var projStates = make(map[int]ProjectileState)
+
+			for _, state := range projectiles {
+
+				projStates[state.ID] = ProjectileState{
+					PosX: state.Pos.X,
+					PosY: state.Pos.Y,
+				}
+
+			}
+			log.Println("Projectiles updated: ", projStates)
+
 			broadcast <- Message{
 				Type:    "projectiles_update",
-				Content: state,
+				Content: projStates,
+			}
+			noRepeat = false
+		} else if !noRepeat {
+			noRepeat = true
+			broadcast <- Message{
+				Type:    "projectiles_update",
+				Content: make(map[int]ProjectileState),
+			}
+
+		}
+		pmu.Unlock()
+
+	}
+}
+
+func SendExplosion(ownerID int, circle Circle) {
+	broadcast <- Message{
+		Type:    "explosion_state",
+		Content: circle,
+	}
+	for playerID, player := range latestStates {
+
+		if player.ID == ownerID {
+			continue
+		}
+		playerCircle := Circle{
+			X:      player.PosX,
+			Y:      player.PosY,
+			Radius: 15,
+		}
+
+		if circle.Intersects(playerCircle) {
+			// Get owner's class for damage calculation
+			if owner, exists := latestStates[ownerID]; exists {
+				attackType := classMap[owner.HeroClass].AttackType
+				attack := classMap[owner.HeroClass].Attack
+				// Update player state
+				if attackType == "magic" {
+					attack = attack - (attack * classMap[latestStates[player.ID].HeroClass].MagicResistance)
+					player.Health -= attack
+				}
+
+				if player.Health <= 0 {
+					broadcast <- Message{
+						ClientID: player.ID,
+						Type:     "player_died",
+					}
+
+					delete(latestStates, playerID)
+					log.Printf("Player %d died", playerID)
+					break
+				}
+				latestStates[playerID] = player // Save updated state
+
+				log.Printf("Player %d hit by %s from player %d for %f damage",
+					playerID, attackType, ownerID, attack)
 			}
 		}
 	}
+
 }

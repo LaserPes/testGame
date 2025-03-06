@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/gopxl/pixel"
@@ -60,6 +61,7 @@ const (
 var dt = 1.0 / fps
 
 func main() {
+
 	pixelgl.Run(run)
 
 }
@@ -76,15 +78,17 @@ func connectToServer() (*websocket.Conn, error) {
 	}
 
 	// Set connection parameters
-	conn.SetReadLimit(32768)
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
+	// conn.SetReadLimit(32768)
+	// conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// conn.SetPongHandler(func(string) error {
+	// 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// 	return nil
+	// })
 
 	return conn, nil
 }
+
+var receive = make(chan Message, 100)
 
 func run() {
 	// Connect to WebSocket server
@@ -117,18 +121,11 @@ func run() {
 		(monitorHeight-winHeight)/2,
 	))
 	// done := make(chan struct{})
-	receive := make(chan Message, 100) // Add buffer to prevent blocking
+	// Add buffer to prevent blocking
 
 	quit := make(chan struct{})
 	defer close(quit)
 
-	// Set connection properties
-	conn.SetReadLimit(32768)
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
 	go func() {
 		for {
 			var msg Message
@@ -140,6 +137,12 @@ func run() {
 
 		}
 	}()
+	for {
+		startGame(win, conn)
+	}
+
+}
+func startGame(win *pixelgl.Window, conn *websocket.Conn) {
 	nickname, heroClass := createPlayerForm(win)
 	if nickname == "" || heroClass == 0 {
 		return // Exit if the form was closed without completing
@@ -155,7 +158,7 @@ func run() {
 		Content: playerData,
 	}
 
-	err = conn.WriteJSON(msg)
+	err := conn.WriteJSON(msg)
 	if err != nil {
 		log.Println("new player write:", err)
 	}
@@ -190,7 +193,12 @@ func run() {
 
 	// Main game loop
 	for !win.Closed() {
-
+		if stopPlaying {
+			log.Println("You are dead")
+			os.Exit(1)
+			stopPlaying = false
+			break
+		}
 		// Calculate delta time
 		currentTime := time.Now()
 		dt = currentTime.Sub(lastTime).Seconds()
@@ -221,28 +229,7 @@ func run() {
 		mousePos := win.MousePosition()
 		direction := mousePos
 		player.direction = direction
-		// var myPlayer = &Player{
-		// 	ID:        playerID,
-		// 	health:    playerClass.Health,
-		// 	heroClass: playerClass,
-		// 	direction: direction,
-		// 	radius:    15,
-		// 	imd:       imdraw.New(nil),
-		// }
-		// myPlayer.pos.X = startX
-		// myPlayer.pos.Y = startY
-		// var playerTrack = &OtherPlayer{
-		// 	Player:      myPlayer,
-		// 	LastSeen:    time.Now(),
-		// 	IsAttacking: false,
-		// }
 
-		// mu.Lock()
-		// otherPlayers[playerID] = playerTrack
-		// mu.Unlock()
-		// myPlayer.Draw(win)
-		// Handle incoming messages
-		// Send player state and draw other players at fixed intervals
 		select {
 		case <-stateTicker.C:
 
@@ -281,16 +268,6 @@ func run() {
 
 		// Handle attacks
 		if win.JustPressed(pixelgl.MouseButtonLeft) {
-			// Check attack cooldown
-			// if time.Since(time.Unix(0, int64(player.lastAttack))).Seconds() < float64(player.heroClass.AttackSpeed)/1000.0 {
-
-			// } else {
-			// if player.heroClass.AttackType == "physical" {
-
-			// }
-			// player.Atta
-			// ck(conn)
-			// player.lastAttack = float64(time.Now().UnixNano())
 
 			// Send attack message
 			msg := Message{
@@ -300,9 +277,6 @@ func run() {
 					"id":         player.ID,
 					"directionX": player.direction.X,
 					"directionY": player.direction.Y,
-					"nickname":   player.nickname,
-					// "heroClass":   heroClass,
-					// "isAttacking": true,
 				},
 			}
 			if err := conn.WriteJSON(msg); err != nil {
@@ -314,15 +288,10 @@ func run() {
 
 		// // Draw all players every frame
 		DrawOtherPlayers(win)
-
+		DrawProjectiles(win)
+		DrawExplosions(win)
+		DrawMeleeEffects(win)
 		win.Update()
 
-	}
-}
-
-func waitPlayer() {
-	if !playerExists {
-		time.Sleep(time.Second / 600)
-		waitPlayer()
 	}
 }

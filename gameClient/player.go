@@ -17,20 +17,17 @@ import (
 
 // Add JSON tags to the Player struct
 type Player struct {
-	ID        int
-	pos       pixel.Vec
-	speed     float64
-	radius    float64
-	imd       *imdraw.IMDraw
-	bounds    pixel.Rect
-	nickname  string
-	heroClass int
-	direction pixel.Vec
-	// projectiles  []*Projectile  `json:"-"` // Skip serialization
+	ID         int
+	pos        pixel.Vec
+	speed      float64
+	radius     float64
+	imd        *imdraw.IMDraw
+	bounds     pixel.Rect
+	nickname   string
+	heroClass  int
+	direction  pixel.Vec
 	lastAttack float64
-	// meleeEffects []*MeleeEffect `json:"-"`      // Skip serialization
-	// explosions   []*Explosion   `json:"-"`      // Skip serialization
-	health int
+	health     int
 }
 
 // Add custom JSON marshaling methods
@@ -80,92 +77,26 @@ func (p *Player) UnmarshalJSON(data []byte) error {
 	p.nickname = aux.Nickname
 	p.heroClass = aux.HeroClass
 	p.direction = aux.Direction
-
-	// Initialize non-serializable fields
 	p.imd = imdraw.New(nil)
-	// p.projectiles = make([]*Projectile, 0)
-	// p.meleeEffects = make([]*MeleeEffect, 0)
 
 	return nil
 }
 
-// type PlayerClass struct {
-// 	ID                 int     `json:"id"`
-// 	MagicResistance    float64 `json:"magicResistance"`
-// 	PhysicalResistance float64 `json:"physicalResistance"`
-// 	Health             int     `json:"health"`
-// 	Attack             int     `json:"attack"`
-// 	AttackRange        float64 `json:"attackRange"`
-// 	AttackSpeed        int     `json:"attackSpeed"`
-// 	AttackType         string  `json:"attackType"`
-// }
-
 // Add after other type declarations
-type Explosion struct {
-	pos       pixel.Vec
-	radius    float64
-	maxRadius float64
-	lifetime  float64
-	maxLife   float64
-	imd       *imdraw.IMDraw
-}
 
-func NewExplosion(pos pixel.Vec) *Explosion {
-	return &Explosion{
-		pos:       pos,
-		radius:    5,
-		maxRadius: 30,
-		lifetime:  0,
-		maxLife:   0.3, // 0.3 seconds duration
-		imd:       imdraw.New(nil),
-	}
-}
-
-func (e *Explosion) Update(dt float64) bool {
-	e.lifetime += dt
-	if e.lifetime > e.maxLife {
-		return false
-	}
-
-	// Expand radius until maxRadius
-	progress := e.lifetime / e.maxLife
-	e.radius = e.maxRadius * progress
-	return true
-}
-
-func (e *Explosion) Draw(win pixel.Target) {
-	e.imd.Clear()
-
-	// Fade out as explosion expands
-	alpha := 1.0 - (e.lifetime / e.maxLife)
-	e.imd.Color = pixel.RGBA{R: 0.2, G: 0.2, B: 1, A: alpha}
-
-	e.imd.Push(e.pos)
-	e.imd.Circle(e.radius, 0)
-	e.imd.Draw(win)
-}
 func NewPlayer(pos pixel.Vec, bounds pixel.Rect, nickname string, heroClass int) Player {
-	// var health int
-	// switch heroClass {
-	// case WarriorClass:
-	// 	health = 150
-	// case MageClass:
-	// 	health = 100
-	// }
+
 	return Player{
 		pos: pos,
 		// speed:     0.3,
-		radius:    15,
-		imd:       imdraw.New(nil),
-		bounds:    bounds,
-		nickname:  nickname,
-		heroClass: heroClass,
-		direction: pixel.V(1, 0), // Default direction pointing right
-		// projectiles:  make([]*Projectile, 0),
-		// meleeEffects: make([]*MeleeEffect, 0),
-		// explosions:   make([]*Explosion, 0),
+		radius:     15,
+		imd:        imdraw.New(nil),
+		bounds:     bounds,
+		nickname:   nickname,
+		heroClass:  heroClass,
+		direction:  pixel.V(1, 0), // Default direction pointing right
 		lastAttack: 0,
-		// health:       health,
+		health:     playerHP,
 	}
 }
 
@@ -185,9 +116,9 @@ func (p *Player) Draw(win *pixelgl.Window) {
 	} else if p.heroClass == 2 {
 		maxHP = 100
 	}
-	redBar := (float64(maxHP) - float64(p.health)) / float64(maxHP)
-	greenBar := float64(p.health) / float64(maxHP)
-	p.imd.Color = pixel.RGB(redBar, greenBar, 0)
+	red := (float64(maxHP) - float64(p.health)) / float64(maxHP)
+	green := float64(p.health) / float64(maxHP)
+	p.imd.Color = pixel.RGB(red, green, 0)
 	p.imd.Push(p.pos)
 	p.imd.Circle(p.radius-5, 0) // Smaller radius for HP indicator
 
@@ -257,14 +188,6 @@ func (p *Player) MoveRight() {
 }
 
 func (p *Player) Attack(conn *websocket.Conn) {
-
-	// Create local projectile
-	// projectile := NewProjectile(
-	// 	p.pos,
-	// 	p.direction,
-	// 	float64(p.heroClass.AttackRange),
-	// )
-	// p.projectiles = append(p.projectiles, projectile)
 
 	// Send projectile creation message to server
 	msg := Message{
@@ -353,90 +276,4 @@ func createPlayerForm(win *pixelgl.Window) (string, int) {
 	}
 
 	return "", 0
-}
-
-// Add this new struct at the top with other type declarations
-type MeleeEffect struct {
-	pos       pixel.Vec
-	radius    float64
-	imd       *imdraw.IMDraw
-	lifetime  float64
-	maxLife   float64
-	direction pixel.Vec
-}
-
-func (m *MeleeEffect) Update(dt float64, pos pixel.Vec) bool {
-	m.lifetime += dt
-	m.pos = pos
-	m.radius += dt                // Grow the effect over time
-	return m.lifetime < m.maxLife // Return false when effect expires
-}
-
-func (m *MeleeEffect) Draw(win pixel.Target) {
-	m.imd.Clear()
-	alpha := 1.0 - (m.lifetime / m.maxLife) // Fade out effect
-	m.imd.Color = pixel.RGBA{R: 1, G: 0.2, B: 0.2, A: alpha}
-	m.imd.Push(m.pos)
-	m.imd.Circle(m.radius, 0)
-	m.imd.Draw(win)
-}
-
-// Add this function near other constructor functions
-func NewMeleeEffect(pos pixel.Vec, r float64) *MeleeEffect {
-	return &MeleeEffect{
-		pos:      pos,
-		radius:   r,
-		imd:      imdraw.New(nil),
-		lifetime: 0,
-		maxLife:  0.5, // half second duration
-	}
-}
-
-// Add this to your existing Projectile struct
-type Projectile struct {
-	pos       pixel.Vec
-	speed     float64
-	radius    float64
-	imd       *imdraw.IMDraw
-	direction pixel.Vec
-	distance  float64
-	maxRange  float64
-}
-
-// Add this function to create new projectiles
-func NewProjectile(pos pixel.Vec, direction pixel.Vec, maxRange float64) *Projectile {
-	return &Projectile{
-		pos:       pos,
-		speed:     0.8,
-		radius:    5,
-		imd:       imdraw.New(nil),
-		direction: direction,
-		distance:  0,
-		maxRange:  maxRange,
-	}
-}
-
-// Add this method to draw and update projectiles
-func (p *Projectile) Update() (bool, pixel.Vec) {
-	movement := p.direction.Scaled(p.speed)
-	p.pos = p.pos.Add(movement)
-	p.distance += movement.Len()
-
-	// Return position for explosion if projectile reached max range
-	if p.distance >= p.maxRange {
-		return false, p.pos
-	}
-	return true, pixel.Vec{}
-}
-
-func (p *Projectile) Draw(win pixel.Target) {
-	p.imd.Clear()
-	p.imd.Push(p.pos)
-	p.imd.Circle(p.radius, 0)
-	if p.maxRange > 50 { // Mage projectile
-		p.imd.Color = pixel.RGB(0, 0, 1)
-	} else { // Warrior projectile
-		p.imd.Color = pixel.RGB(1, 0, 0)
-	}
-	p.imd.Draw(win)
 }

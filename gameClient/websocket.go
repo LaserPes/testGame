@@ -22,13 +22,26 @@ type OtherPlayer struct {
 	LastSeen    time.Time
 	IsAttacking bool
 }
+type ProjectileState struct {
+	PosX float64 `json:"posX"`
+	PosY float64 `json:"posY"`
+}
+type CircleState struct {
+	X, Y   float64
+	Radius float64
+}
 
-var statePlayers = make(map[int]PlayerState)
+var stopPlaying bool
+var explosions = make(map[*Explosion]bool)
+var meleeAttacks = make(map[*MeleeEffect]bool)
+
 var otherPlayers = make(map[int]*OtherPlayer)
+var projectiles = make(map[int]Projectile)
+var nextExplosionID, nextMeleeID int
 
 type PlayerState map[string]interface{}
 
-var mu sync.Mutex
+var mu, emu, pmu, mmu sync.Mutex
 
 // Add these constants at the top of the file
 const (
@@ -63,29 +76,16 @@ func HandleMessage(msg Message, player *Player) {
 			if y, ok := content["Y"].(float64); ok {
 				startY = y
 			}
-			// if classID, ok := content["heroClass"].(int); ok {
-			// 	playerClass = classID
-			// }
+
 			if hp, ok := content["HP"].(int); ok {
 				playerHP = hp
 			}
-			// classJSON, err := json.Marshal(content["heroClass"])
-			// if err != nil {
-			// 	log.Fatal("JSON Marshal error:", err)
-			// }
-
-			// Десериализуем player обратно в структуру PlayerClass
-
-			// err = json.Unmarshal(classJSON, &playerClass)
-			// if err != nil {
-			// 	log.Fatal("JSON Unmarshal error for player:", err)
-			// }
 
 		}
 		playerExists = true
 		log.Println("New player with ID:", playerID, " class:", playerClass, "position:", startX, startY)
 	case "states_update":
-		// log.Println(msg)
+		var statePlayers = make(map[int]PlayerState)
 		data, err := json.Marshal(msg.Content)
 		if err != nil {
 			log.Printf("Error marshaling players states: %v", err)
@@ -101,9 +101,6 @@ func HandleMessage(msg Message, player *Player) {
 		for id, state := range statePlayers {
 			// log.Println("got state: ", state)
 			// Skip our own state
-			if id == playerID {
-				playerHP = player.health
-			}
 
 			// Access map fields correctly
 			pos := pixel.V(0, 0)
@@ -131,12 +128,9 @@ func HandleMessage(msg Message, player *Player) {
 			if hp, ok := state["health"].(float64); ok {
 				health = int(hp)
 			}
-
-			var isAttacking bool
-			if attack, ok := state["isAttacking"].(bool); ok {
-				isAttacking = attack
+			if id == playerID {
+				playerHP = health
 			}
-
 			var heroClass int
 			if hc, ok := state["heroClass"].(float64); ok {
 				heroClass = int(hc)
@@ -165,11 +159,6 @@ func HandleMessage(msg Message, player *Player) {
 
 			otherPlayers[id] = other
 
-			if isAttacking {
-				other.Player.Attack(nil)
-
-			}
-
 		}
 		mu.Unlock()
 
@@ -181,10 +170,100 @@ func HandleMessage(msg Message, player *Player) {
 				other.Player.imd.Clear()
 			}
 			delete(otherPlayers, msg.ClientID)
-			delete(statePlayers, msg.ClientID)
 			log.Printf("Player %d left", msg.ClientID)
 		}
 		mu.Unlock()
+	case "projectiles_update":
+		// log.Println(msg)
+		var projStates map[int]ProjectileState
+		data, err := json.Marshal(msg.Content)
+		if err != nil {
+			log.Printf("Error marshaling players states: %v", err)
+			return
+		}
+		// log.Println(string(data))
+		if err := json.Unmarshal(data, &projStates); err != nil {
+			log.Printf("Error unmarshaling players states: %v", err)
+			return
+		}
+
+		for id, state := range projStates {
+			pmu.Lock()
+			proj, exists := projectiles[id]
+			if !exists {
+				projectiles[id] = Projectile{
+					imd: imdraw.New(nil),
+					pos: pixel.V(state.PosX, state.PosY),
+				}
+
+			} else {
+				proj.pos = pixel.V(state.PosX, state.PosY)
+				projectiles[id] = proj
+			}
+			pmu.Unlock()
+
+		}
+		pmu.Lock()
+		for id := range projectiles {
+			_, exist := projStates[id]
+			if !exist {
+				delete(projectiles, id)
+			}
+		}
+		pmu.Unlock()
+		// log.Println("Projectiles: ", projStates)
+
+	case "explosion_state":
+
+		var expState CircleState
+		data, err := json.Marshal(msg.Content)
+		if err != nil {
+			log.Printf("Error marshaling blow state: %v", err)
+			return
+		}
+
+		if err := json.Unmarshal(data, &expState); err != nil {
+			log.Printf("Error unmarshaling blow state: %v", err)
+			return
+		}
+		explosion := NewExplosion(expState)
+		emu.Lock()
+		explosions[explosion] = true
+		// log.Println("explosions:", explosion)
+		emu.Unlock()
+		nextExplosionID++
+	case "melee_state":
+		var meleeState CircleState
+		data, err := json.Marshal(msg.Content)
+		if err != nil {
+			log.Printf("Error marshaling blow state: %v", err)
+			return
+		}
+
+		if err := json.Unmarshal(data, &meleeState); err != nil {
+			log.Printf("Error unmarshaling blow state: %v", err)
+			return
+		}
+		melee := NewMeleeEffect(meleeState)
+		mmu.Lock()
+		meleeAttacks[melee] = true
+		mmu.Unlock()
+		nextMeleeID++
+	case "player_died":
+		mu.Lock()
+		if playerID == msg.ClientID {
+			stopPlaying = true
+			playerExists = false
+		}
+		if other, exists := otherPlayers[msg.ClientID]; exists {
+			if other.Player != nil && other.Player.imd != nil {
+				other.Player.imd.Clear()
+			}
+			delete(otherPlayers, msg.ClientID)
+			log.Printf("Player %d died", msg.ClientID)
+		}
+		mu.Unlock()
+
 	}
 
 }
@@ -198,20 +277,11 @@ func DrawOtherPlayers(win *pixelgl.Window) {
 
 	// First pass: identify stale players and draw active ones
 	for id, other := range otherPlayers {
-		// if other.Player.ID == playerID {
-		// 	continue
-		// }
-		// log.Println("Drawing: ", other.Player.ID)
-		// Check if player state is too old (more than 1 second)
+
 		if currentTime.Sub(other.LastSeen) > time.Second {
 			stalePlayers = append(stalePlayers, id)
 			continue
 		}
-
-		// Initialize IMDraw if needed
-		// if other.Player.imd == nil {
-		// 	other.Player.imd = imdraw.New(nil)
-		// }
 		other.Player.Draw(win)
 		other.LastSeen = time.Now()
 	}
@@ -223,8 +293,30 @@ func DrawOtherPlayers(win *pixelgl.Window) {
 				other.Player.imd.Clear()
 			}
 			delete(otherPlayers, id)
-			delete(statePlayers, id)
 			log.Printf("Removed stale player: %d", id)
 		}
 	}
+}
+
+func DrawProjectiles(win *pixelgl.Window) {
+	pmu.Lock()
+	for _, proj := range projectiles {
+		proj.Draw(win)
+	}
+	pmu.Unlock()
+}
+
+func DrawExplosions(win *pixelgl.Window) {
+	emu.Lock()
+	for exp := range explosions {
+		exp.Draw(win)
+	}
+	emu.Unlock()
+}
+func DrawMeleeEffects(win *pixelgl.Window) {
+	mmu.Lock()
+	for melee := range meleeAttacks {
+		melee.Draw(win)
+	}
+	mmu.Unlock()
 }

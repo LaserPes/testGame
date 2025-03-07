@@ -26,6 +26,12 @@ type PlayerAttack struct {
 	DirectionX float64 `json:"directionX"`
 	DirectionY float64 `json:"directionY"`
 }
+
+type PlayerData struct {
+	HeroClass int    `json:"heroClass"`
+	Nickname  string `json:"nickname"`
+}
+
 type PlayerClass struct {
 	ID                 int     `json:"id"`
 	MagicResistance    float64 `json:"magicResistance"`
@@ -44,9 +50,9 @@ var WarriorClass = PlayerClass{
 	PhysicalResistance: 0.5,
 	Health:             150,
 	Speed:              600,
-	Attack:             20,
+	Attack:             25,
 	AttackRange:        50,
-	AttackSpeed:        500,
+	AttackSpeed:        300,
 	AttackType:         "physical",
 }
 var MageClass = PlayerClass{
@@ -57,7 +63,7 @@ var MageClass = PlayerClass{
 	Health:             100,
 	Attack:             30,
 	AttackRange:        200,
-	AttackSpeed:        200,
+	AttackSpeed:        500,
 	AttackType:         "magic",
 }
 

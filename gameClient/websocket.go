@@ -82,6 +82,7 @@ func HandleMessage(msg Message, player *Player) {
 			}
 
 		}
+
 		playerExists = true
 		log.Println("New player with ID:", playerID, " class:", playerClass, "position:", startX, startY)
 	case "states_update":
@@ -99,10 +100,7 @@ func HandleMessage(msg Message, player *Player) {
 
 		mu.Lock()
 		for id, state := range statePlayers {
-			// log.Println("got state: ", state)
-			// Skip our own state
 
-			// Access map fields correctly
 			pos := pixel.V(0, 0)
 			if posX, ok := state["posX"].(float64); ok {
 				pos.X = posX
@@ -251,16 +249,19 @@ func HandleMessage(msg Message, player *Player) {
 		nextMeleeID++
 	case "player_died":
 		mu.Lock()
+		if _, exists := otherPlayers[msg.ClientID]; exists {
+			// if other.Player != nil && other.Player.imd != nil {
+			// 	other.Player.imd.Clear()
+			// }
+			delete(otherPlayers, msg.ClientID)
+			log.Printf("Player %d died", msg.ClientID)
+		}
 		if playerID == msg.ClientID {
 			stopPlaying = true
 			playerExists = false
-		}
-		if other, exists := otherPlayers[msg.ClientID]; exists {
-			if other.Player != nil && other.Player.imd != nil {
-				other.Player.imd.Clear()
+			for id := range otherPlayers {
+				delete(otherPlayers, id)
 			}
-			delete(otherPlayers, msg.ClientID)
-			log.Printf("Player %d died", msg.ClientID)
 		}
 		mu.Unlock()
 

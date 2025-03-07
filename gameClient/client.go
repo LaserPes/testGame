@@ -55,7 +55,7 @@ func (b *Button) IsClicked(win *pixelgl.Window) bool {
 }
 
 const (
-	fps = 30.0
+	fps = 60.0
 )
 
 var dt = 1.0 / fps
@@ -72,7 +72,17 @@ func connectToServer() (*websocket.Conn, error) {
 		Subprotocols: []string{"game-protocol"},
 	}
 
-	conn, _, err := dialer.Dial("ws://localhost:8080/ws", nil)
+	ip := os.Getenv("SERVER_IP")
+	port := os.Getenv("SERVER_PORT")
+	if ip == "" || port == "" {
+		ip = "localhost"
+	}
+	if port == "" {
+		port = "8080"
+	}
+	serverInfo := fmt.Sprintf("ws://%s:%s/ws", ip, port)
+
+	conn, _, err := dialer.Dial(serverInfo, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dial error: %v", err)
 	}
@@ -154,10 +164,13 @@ func startGame(win *pixelgl.Window, conn *websocket.Conn) {
 	playerData.HeroClass = heroClass
 	playerData.Nickname = nickname
 	msg := Message{
+
 		Type:    "new_player",
 		Content: playerData,
 	}
-
+	if playerID != 0 {
+		msg.ClientID = playerID
+	}
 	err := conn.WriteJSON(msg)
 	if err != nil {
 		log.Println("new player write:", err)
@@ -167,7 +180,6 @@ func startGame(win *pixelgl.Window, conn *websocket.Conn) {
 		// Handle incoming messages
 		select {
 		case msg := <-receive:
-			log.Println("new player message:", msg)
 			HandleMessage(msg, nil)
 		default:
 			// Continue if no message
@@ -193,10 +205,13 @@ func startGame(win *pixelgl.Window, conn *websocket.Conn) {
 
 	// Main game loop
 	for !win.Closed() {
-		if stopPlaying {
+		// fps
+		time.Sleep(time.Second / fps)
+		if stopPlaying || win.Pressed(pixelgl.KeyEscape) {
 			log.Println("You are dead")
-			os.Exit(1)
+			// os.Exit(1)
 			stopPlaying = false
+			startGame(win, conn)
 			break
 		}
 		// Calculate delta time
@@ -246,6 +261,7 @@ func startGame(win *pixelgl.Window, conn *websocket.Conn) {
 					"movingY": movingY,
 				},
 			}
+
 			if err := conn.WriteJSON(msg); err != nil {
 				log.Println("states write:", err)
 				return

@@ -105,23 +105,18 @@ func main() {
 			log.Printf("Error sending create message: %v", err)
 			return
 		}
-
-		var playerData struct {
-			HeroClass int    `json:"heroClass"`
-			Nickname  string `json:"nickname"`
-		}
-
+		var newPlayer PlayerData
 		data, err := json.Marshal(msg.Content)
 		if err != nil {
 			log.Printf("Error marshaling new player data: %v", err)
 			return
 		}
 
-		if err := json.Unmarshal(data, &playerData); err != nil {
+		if err := json.Unmarshal(data, &newPlayer); err != nil {
 			log.Printf("Error unmarshaling new player data: %v", err)
 			return
 		}
-		log.Println("New player data: ", playerData)
+		log.Println("New player data: ", newPlayer)
 		rand.Seed(uint64(time.Now().UnixNano()))
 		randomX := 20 + rand.Float64()*(winWidth-40)
 		randomY := 20 + rand.Float64()*(winHeight-40)
@@ -133,7 +128,7 @@ func main() {
 				"X":  randomX,
 				"Y":  randomY,
 				// "heroClass": classMap[playerData.HeroClass].ID,
-				"HP": classMap[playerData.HeroClass].Health,
+				"HP": classMap[newPlayer.HeroClass].Health,
 			},
 		}
 		log.Println(createMsg)
@@ -141,9 +136,9 @@ func main() {
 			ID:        client.Id,
 			PosX:      randomX,
 			PosY:      randomY,
-			HeroClass: playerData.HeroClass,
-			Nickname:  playerData.Nickname,
-			Health:    classMap[playerData.HeroClass].Health,
+			HeroClass: newPlayer.HeroClass,
+			Nickname:  newPlayer.Nickname,
+			Health:    classMap[newPlayer.HeroClass].Health,
 		}
 		mu.Lock()
 		latestStates[client.Id] = newPlayerState
@@ -265,6 +260,62 @@ func handleClientStates(client *Client, clients map[*Client]bool, broadcast chan
 				}
 			}
 			mu.Unlock()
+		case "new_player":
+			log.Println("new player: ", msg)
+			var newPlayer PlayerData
+			data, err := json.Marshal(msg.Content)
+			if err != nil {
+				log.Printf("Error marshaling new player data: %v", err)
+				return
+			}
+			if err := json.Unmarshal(data, &newPlayer); err != nil {
+				log.Printf("Error unmarshaling new player data: %v", err)
+				return
+			}
+			mu.Lock()
+			for client := range clients {
+				if client.Id == msg.ClientID {
+					rand.Seed(uint64(time.Now().UnixNano()))
+					randomX := 20 + rand.Float64()*(winWidth-40)
+					randomY := 20 + rand.Float64()*(winHeight-40)
+					// Send welcome message
+					createMsg := Message{
+						Type: "new_player",
+						Content: map[string]interface{}{
+							"id": client.Id,
+							"X":  randomX,
+							"Y":  randomY,
+							// "heroClass": classMap[playerData.HeroClass].ID,
+							"HP": classMap[newPlayer.HeroClass].Health,
+						},
+					}
+					log.Println(createMsg)
+					var newPlayerState = PlayerState{
+						ID:        client.Id,
+						PosX:      randomX,
+						PosY:      randomY,
+						HeroClass: newPlayer.HeroClass,
+						Nickname:  newPlayer.Nickname,
+						Health:    classMap[newPlayer.HeroClass].Health,
+					}
+
+					latestStates[client.Id] = newPlayerState
+
+					jsonData, err := json.Marshal(createMsg)
+					if err != nil {
+						log.Println("JSON Marshal error:", err)
+						return
+					}
+					log.Println(createMsg)
+					// Отправляем данные по WebSocket
+					err = client.Conn.WriteMessage(websocket.TextMessage, jsonData)
+					if err != nil {
+						log.Println("WriteMessage error:", err)
+					}
+				}
+			}
+			mu.Unlock()
+
 		}
 	}
 	defer func() {
